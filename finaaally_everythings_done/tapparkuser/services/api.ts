@@ -23,9 +23,20 @@ export class ApiService {
   // Request debouncing
   private static pendingRequests = new Map<string, Promise<any>>();
   
+  // Stale-while-revalidate cache infrastructure
+  private static swrCache = new Map<string, {
+    data: any;
+    timestamp: number;
+    staleTime: number;
+    tokenHash: string | null;
+  }>();
+  private static swrPendingRequests = new Map<string, Promise<any>>();
+  private static revalidationCallbacks = new Map<string, Array<(data: any) => void>>();
+  
   // Clear cache method
   static clearCache(): void {
     this.cache.clear();
+    this.swrCache.clear();
     console.log('🗑️ API cache cleared');
   }
   
@@ -35,6 +46,163 @@ export class ApiService {
       if (key.includes(url)) {
         this.cache.delete(key);
       }
+    }
+    for (const [key] of this.swrCache.entries()) {
+      if (key.includes(url)) {
+        this.swrCache.delete(key);
+      }
+    }
+  }
+  
+  // Invalidate SWR cache by pattern
+  static invalidateSWRCache(pattern: string): void {
+    for (const [key] of this.swrCache.entries()) {
+      if (key.includes(pattern)) {
+        this.swrCache.delete(key);
+        console.log('🗑️ Invalidated SWR cache for:', key);
+      }
+    }
+  }
+  
+  // Force refresh - bypass cache completely and fetch fresh data
+  static async forceRefresh<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const url = this.buildUrl(endpoint);
+    const token = await this.getStoredToken();
+    const tokenHash = token ? this.getTokenHash(token) : null;
+    const cacheKey = `${options.method || 'GET'}:${url}:${JSON.stringify(options.body || '')}:${tokenHash}`;
+    
+    // Clear cache for this endpoint
+    this.swrCache.delete(cacheKey);
+    console.log('🔄 Force refresh for:', url);
+    
+    // Execute fresh request
+    return this.executeRequest<T>(url, options, false, cacheKey);
+  }
+  
+  // Stale-while-revalidate request method
+  static async requestWithRevalidate<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    staleTime: number = 0, // Time in ms before data is considered stale (0 = always revalidate)
+    onRevalidate?: (data: T) => void // Callback when fresh data arrives
+  ): Promise<T> {
+    const url = this.buildUrl(endpoint);
+    const token = await this.getStoredToken();
+    const tokenHash = token ? this.getTokenHash(token) : null;
+    const cacheKey = `${options.method || 'GET'}:${url}:${JSON.stringify(options.body || '')}:${tokenHash}`;
+    const now = Date.now();
+    
+    // Check if we have cached data
+    const cached = this.swrCache.get(cacheKey);
+    
+    if (cached && cached.tokenHash === tokenHash) {
+      const age = now - cached.timestamp;
+      const isStale = age > cached.staleTime;
+      
+      if (!isStale) {
+        // Data is fresh, return immediately
+        console.log(`✨ Serving fresh SWR cache (${Math.round(age / 1000)}s old):`, url);
+        return cached.data;
+      }
+      
+      // Data is stale but available - return it immediately
+      console.log(`⏰ Serving stale SWR cache (${Math.round(age / 1000)}s old), revalidating in background:`, url);
+      
+      // Register revalidation callback if provided
+      if (onRevalidate) {
+        if (!this.revalidationCallbacks.has(cacheKey)) {
+          this.revalidationCallbacks.set(cacheKey, []);
+        }
+        this.revalidationCallbacks.get(cacheKey)!.push(onRevalidate);
+      }
+      
+      // Trigger background revalidation (don't await)
+      this.revalidateInBackground<T>(url, options, cacheKey, staleTime, tokenHash);
+      
+      // Return stale data immediately
+      return cached.data;
+    }
+    
+    // No cache available - fetch fresh data (with loading state)
+    console.log('🆕 No SWR cache available, fetching fresh data:', url);
+    
+    // Check if there's already a pending request
+    if (this.swrPendingRequests.has(cacheKey)) {
+      console.log('⏳ SWR request already pending, returning existing promise:', url);
+      return this.swrPendingRequests.get(cacheKey);
+    }
+    
+    // Create new request
+    const requestPromise = this.executeRequest<T>(url, options, false, cacheKey);
+    this.swrPendingRequests.set(cacheKey, requestPromise);
+    
+    try {
+      const result = await requestPromise;
+      
+      // Cache the result
+      if (tokenHash) {
+        this.swrCache.set(cacheKey, {
+          data: result,
+          timestamp: now,
+          staleTime,
+          tokenHash
+        });
+      }
+      
+      return result;
+    } finally {
+      this.swrPendingRequests.delete(cacheKey);
+    }
+  }
+  
+  // Background revalidation helper
+  private static async revalidateInBackground<T>(
+    url: string,
+    options: RequestInit,
+    cacheKey: string,
+    staleTime: number,
+    tokenHash: string | null
+  ): Promise<void> {
+    // Don't start another revalidation if one is already in progress
+    if (this.swrPendingRequests.has(cacheKey)) {
+      return;
+    }
+    
+    const requestPromise = this.executeRequest<T>(url, options, false, cacheKey);
+    this.swrPendingRequests.set(cacheKey, requestPromise);
+    
+    try {
+      const result = await requestPromise;
+      
+      // Update cache with fresh data
+      if (tokenHash) {
+        this.swrCache.set(cacheKey, {
+          data: result,
+          timestamp: Date.now(),
+          staleTime,
+          tokenHash
+        });
+        console.log('✅ Background revalidation complete:', url);
+      }
+      
+      // Call all registered callbacks with fresh data
+      const callbacks = this.revalidationCallbacks.get(cacheKey);
+      if (callbacks && callbacks.length > 0) {
+        console.log(`📢 Notifying ${callbacks.length} callback(s) with fresh data`);
+        callbacks.forEach(callback => {
+          try {
+            callback(result);
+          } catch (error) {
+            console.error('Error in revalidation callback:', error);
+          }
+        });
+        // Clear callbacks after notifying
+        this.revalidationCallbacks.delete(cacheKey);
+      }
+    } catch (error) {
+      console.error('❌ Background revalidation failed:', error);
+    } finally {
+      this.swrPendingRequests.delete(cacheKey);
     }
   }
   
@@ -571,34 +739,10 @@ export class ApiService {
   }
 
   // Vehicle endpoints
-  // Client-side vehicle cache with debouncing (scoped per authenticated user)
-  private static vehicleCache: { data: any; timestamp: number; ttl: number; tokenHash: string | null } | null = null;
-  private static pendingVehicleRequest: { promise: Promise<any>; tokenHash: string | null } | null = null;
   private static readonly VEHICLE_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-  static async getVehicles() {
-    const token = await this.getStoredToken();
-    const tokenHash = token ? this.getTokenHash(token) : null;
-
-    // Check if we have a valid cache
-    if (
-      tokenHash &&
-      this.vehicleCache &&
-      this.vehicleCache.tokenHash === tokenHash &&
-      (Date.now() - this.vehicleCache.timestamp) < this.vehicleCache.ttl
-    ) {
-      console.log('🚗 Serving vehicles from client-side cache');
-      return this.vehicleCache.data;
-    }
-
-    // If there's already a pending request, return it
-    if (this.pendingVehicleRequest && this.pendingVehicleRequest.tokenHash === tokenHash) {
-      console.log('🚗 Returning pending vehicle request');
-      return this.pendingVehicleRequest.promise;
-    }
-
-    // Create the request
-    const requestPromise = this.request<{
+  static async getVehicles(onRevalidate?: (data: any) => void) {
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         vehicles: Array<{
@@ -613,35 +757,13 @@ export class ApiService {
         }>;
         cached?: boolean;
       };
-    }>('/vehicles');
-
-    this.pendingVehicleRequest = { promise: requestPromise, tokenHash };
-
-    try {
-      const result = await requestPromise;
-      
-      // Cache the result if successful
-      if (result.success && tokenHash) {
-        this.vehicleCache = {
-          data: result,
-          timestamp: Date.now(),
-          ttl: this.VEHICLE_CACHE_TTL,
-          tokenHash
-        };
-      }
-      
-      return result;
-    } finally {
-      if (this.pendingVehicleRequest?.promise === requestPromise) {
-        this.pendingVehicleRequest = null;
-      }
-    }
+    }>('/vehicles', {}, this.VEHICLE_CACHE_TTL, onRevalidate); // 2 min stale time
   }
 
   // Method to invalidate vehicle cache (call after add/update/delete)
   static invalidateVehicleCache() {
-    this.vehicleCache = null;
-    console.log('🚗 Invalidated client-side vehicle cache');
+    this.invalidateSWRCache('/vehicles');
+    console.log('🚗 Invalidated vehicle cache');
   }
 
   static async addVehicle(vehicleData: {
@@ -884,15 +1006,12 @@ export class ApiService {
   }
 
   static async bookParkingSpot(vehicleId: number, spotId: number, areaId: number) {
-    return this.request<{
+    const result = await this.request<{
       success: boolean;
+      message: string;
       data: {
         reservationId: number;
-        qrCode: string;
-        message: string;
         bookingDetails: {
-          reservationId: number;
-          qrCode: string;
           vehiclePlate: string;
           vehicleType: string;
           vehicleBrand: string;
@@ -912,12 +1031,22 @@ export class ApiService {
         areaId
       }),
     });
+    
+    // Invalidate related caches after successful booking
+    if (result.success) {
+      this.invalidateSWRCache('/parking-areas/my-bookings');
+      this.invalidateSWRCache('/history');
+      this.invalidateFrequentSpotsCache();
+      console.log('🔄 Invalidated booking-related caches after new booking');
+    }
+    
+    return result;
   }
 
   // Timer is now purely local - no server-side timer needed
 
   // Get user history
-  static async getHistory(page: number = 1, limit: number = 20, type?: string) {
+  static async getHistory(page: number = 1, limit: number = 20, type?: string, onRevalidate?: (data: any) => void) {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
@@ -927,7 +1056,7 @@ export class ApiService {
       params.append('type', type);
     }
     
-    return this.request<{
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         history: any[];
@@ -938,11 +1067,11 @@ export class ApiService {
           itemsPerPage: number;
         };
       };
-    }>(`/history?${params.toString()}`, {}, true); // Use cache
+    }>(`/history?${params.toString()}`, {}, 0, onRevalidate); // 0s stale time = always revalidate
   }
 
   // Get parking history only
-  static async getParkingHistory(page: number = 1, limit: number = 10, status?: string) {
+  static async getParkingHistory(page: number = 1, limit: number = 10, status?: string, onRevalidate?: (data: any) => void) {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
@@ -952,7 +1081,7 @@ export class ApiService {
       params.append('status', status);
     }
     
-    return this.request<{
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         sessions: any[];
@@ -963,11 +1092,11 @@ export class ApiService {
           itemsPerPage: number;
         };
       };
-    }>(`/history/parking?${params.toString()}`, {}, true); // Use cache
+    }>(`/history/parking?${params.toString()}`, {}, 0, onRevalidate); // 0s stale time = always revalidate
   }
 
   // Get payment history only
-  static async getPaymentHistory(page: number = 1, limit: number = 10, type?: string) {
+  static async getPaymentHistory(page: number = 1, limit: number = 10, type?: string, onRevalidate?: (data: any) => void) {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
@@ -977,7 +1106,7 @@ export class ApiService {
       params.append('type', type);
     }
     
-    return this.request<{
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         payments: any[];
@@ -988,17 +1117,25 @@ export class ApiService {
           itemsPerPage: number;
         };
       };
-    }>(`/history/payments?${params.toString()}`, {}, true); // Use cache
+    }>(`/history/payments?${params.toString()}`, {}, 0, onRevalidate); // 0s stale time = always revalidate
   }
 
   // Delete history record
   static async deleteHistoryRecord(reservationId: number) {
-    return this.request<{
+    const result = await this.request<{
       success: boolean;
       message: string;
     }>(`/history/parking/${reservationId}`, {
       method: 'DELETE',
     });
+    
+    // Invalidate history cache after deleting
+    if (result.success) {
+      this.invalidateSWRCache('/history');
+      console.log('🔄 Invalidated history cache after deleting record');
+    }
+    
+    return result;
   }
 
   // Get history statistics
@@ -1035,19 +1172,19 @@ export class ApiService {
       success: boolean;
       data: {
         parkingSpotId: number;
+        parkingSectionId?: number;
+        parkingAreaId?: number;
       };
     }>(`/parking-areas/reservation/${reservationId}/parking-spot-id`);
   }
 
-  static async getBookingDetails(reservationId: number, includeBilling: boolean = false) {
-    // Add cache-busting parameter to prevent caching
-    const timestamp = Date.now();
-    const queryParams = includeBilling ? `t=${timestamp}&includeBilling=true` : `t=${timestamp}`;
+  static async getBookingDetails(reservationId: number, includeBilling: boolean = false, onRevalidate?: (data: any) => void) {
+    const queryParams = includeBilling ? 'includeBilling=true' : '';
+    const endpoint = queryParams ? `/parking-areas/booking/${reservationId}?${queryParams}` : `/parking-areas/booking/${reservationId}`;
     
-    // Debug logging to verify parameter
-    console.log('🔍 getBookingDetails called with:', { reservationId, includeBilling, queryParams });
+    console.log('🔍 getBookingDetails called with:', { reservationId, includeBilling });
     
-    return this.request<{
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         reservationId: number;
@@ -1092,13 +1229,11 @@ export class ApiService {
           breakdown: string;
         } | null;
       };
-    }>(`/parking-areas/booking/${reservationId}?${queryParams}`);
+    }>(endpoint, {}, 0, onRevalidate); // 0s stale time = always revalidate
   }
 
-  static async getMyBookings() {
-    // Add cache-busting parameter to prevent caching
-    const timestamp = Date.now();
-    return this.request<{
+  static async getMyBookings(onRevalidate?: (data: any) => void) {
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         bookings: Array<{
@@ -1128,11 +1263,11 @@ export class ApiService {
           qrCode: string;
         }>;
       };
-    }>(`/parking-areas/my-bookings?t=${timestamp}`);
+    }>('/parking-areas/my-bookings', {}, 0, onRevalidate); // 0s stale time = always revalidate
   }
 
   static async endParkingSession(reservationId: number) {
-    return this.request<{
+    const result = await this.request<{
       success: boolean;
       message: string;
       data: {
@@ -1143,11 +1278,21 @@ export class ApiService {
     }>(`/parking-areas/end-session/${reservationId}`, {
       method: 'PUT',
     });
+    
+    // Invalidate related caches after ending session
+    if (result.success) {
+      this.invalidateSWRCache('/parking-areas/my-bookings');
+      this.invalidateSWRCache('/history');
+      this.invalidateFrequentSpotsCache();
+      console.log('🔄 Invalidated booking-related caches after ending session');
+    }
+    
+    return result;
   }
 
   // Favorites API methods
-  static async getFavorites() {
-    return this.request<{
+  static async getFavorites(onRevalidate?: (data: any) => void) {
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         favorites: Array<{
@@ -1166,25 +1311,41 @@ export class ApiService {
           hourly_rate: number;
         }>;
       };
-    }>('/favorites');
+    }>('/favorites', {}, this.VEHICLE_CACHE_TTL, onRevalidate); // 2 min stale time
   }
 
   static async addFavorite(parkingSpotId: number | string) {
-    return this.request<{
+    const result = await this.request<{
       success: boolean;
       message: string;
     }>(`/favorites/${parkingSpotId}`, {
       method: 'POST',
     });
+    
+    // Invalidate favorites cache after adding
+    if (result.success) {
+      this.invalidateSWRCache('/favorites');
+      console.log('🔄 Invalidated favorites cache after adding');
+    }
+    
+    return result;
   }
 
   static async removeFavorite(parkingSpotId: number | string) {
-    return this.request<{
+    const result = await this.request<{
       success: boolean;
       message: string;
     }>(`/favorites/${parkingSpotId}`, {
       method: 'DELETE',
     });
+    
+    // Invalidate favorites cache after removing
+    if (result.success) {
+      this.invalidateSWRCache('/favorites');
+      console.log('🔄 Invalidated favorites cache after removing');
+    }
+    
+    return result;
   }
 
   static async checkFavorite(parkingSpotId: number | string) {
@@ -1250,41 +1411,12 @@ export class ApiService {
     }>('/subscriptions/balance');
   }
 
-  // Client-side frequent spots cache (scoped per authenticated user & limit)
-  private static frequentSpotsCache: { data: any; timestamp: number; ttl: number; tokenHash: string | null; limit: number } | null = null;
-  private static pendingFrequentSpotsRequest: { promise: Promise<any>; tokenHash: string | null; limit: number } | null = null;
+  // Frequent spots cache
   private static readonly FREQUENT_SPOTS_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
   // Get frequently used parking spots
-  static async getFrequentSpots(limit: number = 5) {
-    const now = Date.now();
-    const token = await this.getStoredToken();
-    const tokenHash = token ? this.getTokenHash(token) : null;
-    
-    // Check if we have a valid cache
-    if (
-      tokenHash &&
-      this.frequentSpotsCache &&
-      this.frequentSpotsCache.tokenHash === tokenHash &&
-      this.frequentSpotsCache.limit === limit &&
-      (now - this.frequentSpotsCache.timestamp) < this.frequentSpotsCache.ttl
-    ) {
-      console.log('🔥 Serving frequent spots from client-side cache');
-      return this.frequentSpotsCache.data;
-    }
-
-    // If there's already a pending request, return it
-    if (
-      this.pendingFrequentSpotsRequest &&
-      this.pendingFrequentSpotsRequest.tokenHash === tokenHash &&
-      this.pendingFrequentSpotsRequest.limit === limit
-    ) {
-      console.log('🔥 Returning pending frequent spots request');
-      return this.pendingFrequentSpotsRequest.promise;
-    }
-
-    // Create the request
-    const requestPromise = this.request<{
+  static async getFrequentSpots(limit: number = 5, onRevalidate?: (data: any) => void) {
+    return this.requestWithRevalidate<{
       success: boolean;
       data: {
         frequent_spots: Array<{
@@ -1300,36 +1432,13 @@ export class ApiService {
         }>;
         cached?: boolean;
       };
-    }>(`/history/frequent-spots?limit=${limit}`);
-
-    this.pendingFrequentSpotsRequest = { promise: requestPromise, tokenHash, limit };
-
-    try {
-      const result = await requestPromise;
-      
-      // Cache the result if successful
-      if (result.success && tokenHash) {
-        this.frequentSpotsCache = {
-          data: result,
-          timestamp: now,
-          ttl: result.data.cached ? this.FREQUENT_SPOTS_CACHE_TTL / 2 : this.FREQUENT_SPOTS_CACHE_TTL,
-          tokenHash,
-          limit
-        };
-      }
-      
-      return result;
-    } finally {
-      if (this.pendingFrequentSpotsRequest?.promise === requestPromise) {
-        this.pendingFrequentSpotsRequest = null;
-      }
-    }
+    }>(`/history/frequent-spots?limit=${limit}`, {}, this.FREQUENT_SPOTS_CACHE_TTL, onRevalidate); // 2 min stale time
   }
 
   // Method to invalidate frequent spots cache
   static invalidateFrequentSpotsCache() {
-    this.frequentSpotsCache = null;
-    console.log('🔥 Invalidated client-side frequent spots cache');
+    this.invalidateSWRCache('/history/frequent-spots');
+    console.log('🔥 Invalidated frequent spots cache');
   }
 
   // Attendant API methods
@@ -1747,18 +1856,46 @@ export class ApiService {
     }>(`/capacity/areas/${areaId}/capacity-status`);
   }
 
-  static async reserveCapacity(sectionId: number, reservationId?: number) {
+  static async reserveCapacity(
+    sectionId: number,
+    params?: {
+      reservationId?: number;
+      vehicleId?: number;
+      spotNumber?: string;
+      areaId?: number;
+    }
+  ) {
     return this.request<{
       success: boolean;
       message: string;
       data: {
         reservationId: number;
+        qrCode?: string;
+        qrKey?: string;
         sectionName: string;
         remainingCapacity: number;
+        bookingDetails?: {
+          reservationId: number;
+          vehiclePlate?: string;
+          vehicleType?: string;
+          vehicleBrand?: string;
+          areaName?: string;
+          areaLocation?: string;
+          sectionName?: string;
+          spotNumber?: string;
+          spotType?: string;
+          status?: string;
+          startTime?: string | null;
+        };
       };
     }>(`/capacity/sections/${sectionId}/reserve`, {
       method: 'POST',
-      body: JSON.stringify({ reservationId }),
+      body: JSON.stringify({
+        reservationId: params?.reservationId,
+        vehicleId: params?.vehicleId,
+        spotNumber: params?.spotNumber,
+        areaId: params?.areaId,
+      }),
     });
   }
 

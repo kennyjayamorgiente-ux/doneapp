@@ -263,7 +263,16 @@ const FavoritesScreen: React.FC = () => {
 
   const handleBookSpot = (favorite: any) => {
     console.log('🎯 handleBookSpot called with favorite:', favorite);
-    setSelectedSpotForBooking(favorite);
+    const numericSpotId = Number(favorite.parking_spot_id);
+    const isCapacitySection =
+      !favorite.parking_spot_id || favorite.parking_spot_id === 0 || Number.isNaN(numericSpotId);
+    setSelectedSpotForBooking({
+      ...favorite,
+      isCapacitySection,
+      sectionId: favorite.parking_section_id,
+      spot_number: favorite.spot_number || favorite.section_name,
+      section_name: favorite.section_name
+    });
     setIsVehicleSelectionModalVisible(true);
   };
 
@@ -355,24 +364,50 @@ const FavoritesScreen: React.FC = () => {
         return;
       }
 
-      console.log('🚀 Calling ApiService.bookParkingSpot with:', {
-        vehicleId: vehicle.id,
-        spotId: selectedSpotForBooking.parking_spot_id,
-        areaId: selectedSpotForBooking.parking_area_id
-      });
+      const numericSpotId = Number(selectedSpotForBooking.parking_spot_id);
+      const isCapacitySection =
+        selectedSpotForBooking.isCapacitySection ||
+        (!selectedSpotForBooking.parking_spot_id || selectedSpotForBooking.parking_spot_id === 0 || Number.isNaN(numericSpotId));
+      let response;
 
-      const response = await ApiService.bookParkingSpot(
-        vehicle.id,
-        selectedSpotForBooking.parking_spot_id,
-        selectedSpotForBooking.parking_area_id
-      );
+      if (isCapacitySection) {
+        const sectionId = selectedSpotForBooking.sectionId || selectedSpotForBooking.parking_section_id;
+        if (!sectionId) {
+          setIsBooking(false);
+          Alert.alert('Error', 'Missing section information for this favorite.');
+          return;
+        }
+
+        console.log('🏍️ Re-booking favorite capacity section:', selectedSpotForBooking);
+        response = await ApiService.reserveCapacity(sectionId, {
+          vehicleId: vehicle.id,
+          spotNumber: selectedSpotForBooking.spot_number || selectedSpotForBooking.section_name,
+          areaId: selectedSpotForBooking.parking_area_id,
+        });
+      } else {
+        console.log('🚀 Calling ApiService.bookParkingSpot with:', {
+          vehicleId: vehicle.id,
+          spotId: selectedSpotForBooking.parking_spot_id,
+          areaId: selectedSpotForBooking.parking_area_id
+        });
+
+        response = await ApiService.bookParkingSpot(
+          vehicle.id,
+          selectedSpotForBooking.parking_spot_id,
+          selectedSpotForBooking.parking_area_id
+        );
+      }
       
       console.log('🎯 Booking response:', JSON.stringify(response, null, 2));
       
       if (response.success) {
+        const bookingDetails = response.data?.bookingDetails;
+        const isCapacitySection = selectedSpotForBooking.isCapacitySection || (!selectedSpotForBooking.parking_spot_id || selectedSpotForBooking.parking_spot_id === 0);
         Alert.alert(
           'Success',
-          'Parking spot booked successfully!',
+          isCapacitySection
+            ? `Section ${bookingDetails?.sectionName || selectedSpotForBooking.section_name || selectedSpotForBooking.spot_number} booked successfully!`
+            : 'Parking spot booked successfully!',
           [
             {
               text: 'OK',
@@ -385,16 +420,20 @@ const FavoritesScreen: React.FC = () => {
                       pathname: '/screens/ActiveParkingScreen',
                       params: {
                         sessionId: response.data.reservationId,
+                        capacityReservationId: isCapacitySection ? response.data.reservationId : undefined,
+                        isCapacitySection: isCapacitySection ? 'true' : undefined,
+                        sectionId: isCapacitySection ? (selectedSpotForBooking.sectionId?.toString() ?? '') : undefined,
+                        sectionName: bookingDetails?.sectionName || selectedSpotForBooking.section_name || '',
                         vehicleId: vehicle.id,
-                        vehiclePlate: response.data.bookingDetails.vehiclePlate,
-                        vehicleType: response.data.bookingDetails.vehicleType,
-                        vehicleBrand: response.data.bookingDetails.vehicleBrand,
-                        areaName: response.data.bookingDetails.areaName,
-                        areaLocation: response.data.bookingDetails.areaLocation,
-                        spotNumber: response.data.bookingDetails.spotNumber,
-                        spotType: response.data.bookingDetails.spotType,
-                        startTime: response.data.bookingDetails.startTime,
-                        status: response.data.bookingDetails.status
+                        vehiclePlate: bookingDetails?.vehiclePlate || response.data.bookingDetails?.vehiclePlate,
+                        vehicleType: bookingDetails?.vehicleType || response.data.bookingDetails?.vehicleType,
+                        vehicleBrand: bookingDetails?.vehicleBrand || response.data.bookingDetails?.vehicleBrand,
+                        areaName: bookingDetails?.areaName || response.data.bookingDetails?.areaName,
+                        areaLocation: bookingDetails?.areaLocation || response.data.bookingDetails?.areaLocation,
+                        spotNumber: bookingDetails?.spotNumber || response.data.bookingDetails?.spotNumber,
+                        spotType: bookingDetails?.spotType || response.data.bookingDetails?.spotType,
+                        startTime: bookingDetails?.startTime || response.data.bookingDetails?.startTime,
+                        status: bookingDetails?.status || response.data.bookingDetails?.status
                       }
                     });
                     setTimeout(() => hideLoading(), 500);

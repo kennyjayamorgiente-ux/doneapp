@@ -156,21 +156,46 @@ const HistoryScreen: React.FC = () => {
     console.log('View details for:', historyId);
   };
 
-  const handleBookAgain = (historyId: string) => {
+  const handleBookAgain = async (historyId: string) => {
     console.log('🎯 handleBookAgain called with historyId:', historyId);
     
     // Find the history item to get spot details
     const historyItem = historyData.find(item => item.reservation_id === historyId);
-    if (historyItem) {
-      console.log('🎯 Found history item:', historyItem);
-      
-      // Validate that required fields exist
-      if (!historyItem.parking_spot_id || !historyItem.parking_area_id) {
-        console.error('❌ Missing required fields:', {
-          parking_spot_id: historyItem.parking_spot_id,
-          parking_area_id: historyItem.parking_area_id,
-          historyItem
-        });
+    if (!historyItem) {
+      console.log('❌ History item not found');
+      Alert.alert('Error', 'Could not find booking details');
+      return;
+    }
+
+    console.log('🎯 Found history item:', historyItem);
+
+    let parkingSpotId = Number(historyItem.parking_spot_id || historyItem.parking_spots_id);
+    let parkingAreaId = Number(historyItem.parking_area_id);
+    let parkingSectionId = Number(historyItem.parking_section_id);
+
+    // If the API response omitted the spot ID, fetch it using the reservation ID
+    if (!parkingSpotId || parkingSpotId <= 0 || !parkingAreaId || parkingAreaId <= 0) {
+      try {
+        showLoading('Fetching spot details...');
+        const spotIdResponse = await ApiService.getParkingSpotIdFromReservation(Number(historyId));
+        hideLoading();
+
+        if (spotIdResponse.success && spotIdResponse.data) {
+          const { parkingSpotId: resolvedSpotId, parkingSectionId: resolvedSectionId, parkingAreaId: resolvedAreaId } = spotIdResponse.data;
+          if (resolvedSpotId !== undefined && resolvedSpotId !== null) {
+            parkingSpotId = resolvedSpotId;
+            console.log('✅ Retrieved missing parking spot ID:', parkingSpotId);
+          }
+          if (resolvedSectionId) {
+            parkingSectionId = resolvedSectionId;
+          }
+          if (resolvedAreaId) {
+            parkingAreaId = resolvedAreaId;
+          }
+        }
+      } catch (error) {
+        hideLoading();
+        console.error('❌ Unable to resolve parking spot ID for history booking:', error);
         Alert.alert(
           'Error',
           'Missing parking spot information. Please try refreshing the history or contact support.',
@@ -178,13 +203,39 @@ const HistoryScreen: React.FC = () => {
         );
         return;
       }
-      
-      setSelectedSpotForBooking(historyItem);
-      setIsVehicleSelectionModalVisible(true);
-    } else {
-      console.log('❌ History item not found');
-      Alert.alert('Error', 'Could not find booking details');
     }
+
+    const isCapacitySection = (!parkingSpotId || parkingSpotId <= 0) && !!parkingSectionId;
+
+    if (!isCapacitySection && (!parkingSpotId || parkingSpotId <= 0)) {
+      Alert.alert(
+        'Error',
+        'Missing parking spot information. Please try refreshing the history or contact support.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    if (!parkingAreaId || parkingAreaId <= 0) {
+      console.error('❌ Missing parking area ID for history booking:', { parkingAreaId, historyItem });
+      Alert.alert(
+        'Error',
+        'Missing parking area information. Please try refreshing the history or contact support.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    setSelectedSpotForBooking({
+      ...historyItem,
+      parking_spot_id: parkingSpotId || 0,
+      parking_area_id: parkingAreaId,
+      sectionId: parkingSectionId,
+      isCapacitySection,
+      spot_number: historyItem.spot_number || historyItem.section_name || historyItem.location_name,
+      section_name: historyItem.section_name
+    });
+    setIsVehicleSelectionModalVisible(true);
   };
 
   const handleAddToFavorites = async (historyId: string) => {
@@ -376,24 +427,45 @@ const HistoryScreen: React.FC = () => {
         return;
       }
 
-      console.log('🚀 Calling ApiService.bookParkingSpot with:', {
-        vehicleId: vehicle.id,
-        spotId: selectedSpotForBooking.parking_spot_id,
-        areaId: selectedSpotForBooking.parking_area_id
-      });
+      const isCapacitySection = selectedSpotForBooking.isCapacitySection || (!selectedSpotForBooking.parking_spot_id || selectedSpotForBooking.parking_spot_id === 0);
+      let response;
 
-      const response = await ApiService.bookParkingSpot(
-        vehicle.id,
-        selectedSpotForBooking.parking_spot_id,
-        selectedSpotForBooking.parking_area_id
-      );
+      if (isCapacitySection) {
+        if (!selectedSpotForBooking.sectionId) {
+          setIsBooking(false);
+          Alert.alert('Error', 'Missing section information for this booking.');
+          return;
+        }
+
+        console.log('🏍️ Re-booking capacity section from history:', selectedSpotForBooking);
+        response = await ApiService.reserveCapacity(selectedSpotForBooking.sectionId, {
+          vehicleId: vehicle.id,
+          spotNumber: selectedSpotForBooking.spot_number || selectedSpotForBooking.section_name,
+          areaId: selectedSpotForBooking.parking_area_id,
+        });
+      } else {
+        console.log('🚀 Calling ApiService.bookParkingSpot with:', {
+          vehicleId: vehicle.id,
+          spotId: selectedSpotForBooking.parking_spot_id,
+          areaId: selectedSpotForBooking.parking_area_id
+        });
+
+        response = await ApiService.bookParkingSpot(
+          vehicle.id,
+          selectedSpotForBooking.parking_spot_id,
+          selectedSpotForBooking.parking_area_id
+        );
+      }
 
       console.log('🎯 Booking response:', JSON.stringify(response, null, 2));
 
       if (response.success) {
+        const bookingDetails = response.data?.bookingDetails;
         Alert.alert(
           'Success',
-          'Parking spot booked successfully!',
+          isCapacitySection
+            ? `Section ${bookingDetails?.sectionName || selectedSpotForBooking.section_name || selectedSpotForBooking.spot_number} booked successfully!`
+            : 'Parking spot booked successfully!',
           [
             {
               text: 'OK',
@@ -406,16 +478,20 @@ const HistoryScreen: React.FC = () => {
                       pathname: '/screens/ActiveParkingScreen',
                       params: {
                         sessionId: response.data.reservationId,
+                        capacityReservationId: isCapacitySection ? response.data.reservationId : undefined,
+                        isCapacitySection: isCapacitySection ? 'true' : undefined,
+                        sectionId: isCapacitySection ? (selectedSpotForBooking.sectionId?.toString() ?? '') : undefined,
+                        sectionName: bookingDetails?.sectionName || selectedSpotForBooking.section_name || '',
                         vehicleId: vehicle.id,
-                        vehiclePlate: response.data.bookingDetails.vehiclePlate,
-                        vehicleType: response.data.bookingDetails.vehicleType,
-                        vehicleBrand: response.data.bookingDetails.vehicleBrand,
-                        areaName: response.data.bookingDetails.areaName,
-                        areaLocation: response.data.bookingDetails.areaLocation,
-                        spotNumber: response.data.bookingDetails.spotNumber,
-                        spotType: response.data.bookingDetails.spotType,
-                        startTime: response.data.bookingDetails.startTime,
-                        status: response.data.bookingDetails.status
+                        vehiclePlate: bookingDetails?.vehiclePlate || response.data.bookingDetails?.vehiclePlate,
+                        vehicleType: bookingDetails?.vehicleType || response.data.bookingDetails?.vehicleType,
+                        vehicleBrand: bookingDetails?.vehicleBrand || response.data.bookingDetails?.vehicleBrand,
+                        areaName: bookingDetails?.areaName || response.data.bookingDetails?.areaName,
+                        areaLocation: bookingDetails?.areaLocation || response.data.bookingDetails?.areaLocation,
+                        spotNumber: bookingDetails?.spotNumber || response.data.bookingDetails?.spotNumber,
+                        spotType: bookingDetails?.spotType || response.data.bookingDetails?.spotType,
+                        startTime: bookingDetails?.startTime || response.data.bookingDetails?.startTime,
+                        status: bookingDetails?.status || response.data.bookingDetails?.status
                       }
                     });
                     setTimeout(() => hideLoading(), 500);

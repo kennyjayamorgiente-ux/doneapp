@@ -2626,9 +2626,12 @@ const ActiveParkingScreen: React.FC = () => {
         setIsBookingLoading(true);
         setBookingError(null);
         
-        // Get reservation ID from params (passed from HomeScreen)
-        const reservationId = params.reservationId || params.sessionId;
-        console.log('🎯 ActiveParkingScreen: Reservation ID from params:', reservationId);
+        // Get reservation ID from params (passed from HomeScreen/Favorites/History)
+        const reservationId =
+          params.capacityReservationId ||
+          params.reservationId ||
+          params.sessionId;
+        console.log('🎯 ActiveParkingScreen: Reservation ID from params (any source):', reservationId);
         
         let targetReservationId: number | null = null;
         
@@ -2748,7 +2751,7 @@ const ActiveParkingScreen: React.FC = () => {
     };
 
     fetchBookingData();
-  }, [params.reservationId, params.sessionId]); // Removed router dependency
+  }, [params.capacityReservationId, params.reservationId, params.sessionId]); // Removed router dependency
 
   // Simple local timer - ONLY controlled by attendant scans
   useEffect(() => {
@@ -2786,8 +2789,11 @@ const ActiveParkingScreen: React.FC = () => {
     React.useCallback(() => {
       const refreshBookingData = async () => {
         try {
-          // Get reservation ID from params (passed from HomeScreen)
-          const reservationId = params.reservationId || params.sessionId;
+          // Get reservation ID from params (passed from any booking surface)
+          const reservationId =
+            params.capacityReservationId ||
+            params.reservationId ||
+            params.sessionId;
           
           let targetReservationId: number | null = null;
           
@@ -2852,7 +2858,7 @@ const ActiveParkingScreen: React.FC = () => {
       };
       
       refreshBookingData();
-    }, [params.reservationId, params.sessionId])
+    }, [params.capacityReservationId, params.reservationId, params.sessionId])
   );
 
   // Real-time polling to sync with attendant actions

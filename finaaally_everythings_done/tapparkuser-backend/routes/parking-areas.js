@@ -983,8 +983,14 @@ router.get('/reservation/:reservationId/parking-spot-id', authenticateToken, asy
     const { reservationId } = req.params;
     
     const result = await db.query(`
-      SELECT r.parking_spots_id 
+      SELECT 
+        r.parking_spots_id,
+        r.parking_section_id,
+        COALESCE(ps_section.parking_area_id, direct_section.parking_area_id) AS parking_area_id
       FROM reservations r
+      LEFT JOIN parking_spot ps ON r.parking_spots_id = ps.parking_spot_id
+      LEFT JOIN parking_section ps_section ON ps.parking_section_id = ps_section.parking_section_id
+      LEFT JOIN parking_section direct_section ON r.parking_section_id = direct_section.parking_section_id
       WHERE r.reservation_id = ? AND r.user_id = ?
     `, [reservationId, req.user.user_id]);
     
@@ -998,7 +1004,9 @@ router.get('/reservation/:reservationId/parking-spot-id', authenticateToken, asy
     res.json({
       success: true,
       data: {
-        parkingSpotId: result[0].parking_spots_id
+        parkingSpotId: result[0].parking_spots_id,
+        parkingSectionId: result[0].parking_section_id,
+        parkingAreaId: result[0].parking_area_id
       }
     });
     

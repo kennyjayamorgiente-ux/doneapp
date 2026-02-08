@@ -819,6 +819,64 @@ export default function HomeScreen() {
   const handleBookFrequentSpot = async (spot: any) => {
     console.log('🎯 handleBookFrequentSpot called with spot:', spot);
     
+    // Check if this is a capacity section
+    // Capacity sections have parking_spot_id = 0 or null
+    const isCapacitySection = !spot.parking_spot_id || spot.parking_spot_id === 0;
+    
+    if (isCapacitySection) {
+      console.log('🏍️ Capacity section detected, implementing capacity booking flow:', spot);
+      
+      // For capacity sections, we need to get the section_id first
+      try {
+        showLoading('Loading section details...');
+        
+        // Get capacity sections for this area
+        const capacityResponse = await ApiService.getCapacityStatus(spot.parking_area_id);
+        hideLoading();
+        
+        if (!capacityResponse.success) {
+          Alert.alert('Error', 'Failed to load section details');
+          return;
+        }
+        
+        // Find the matching section by section_name
+        const matchingSection = capacityResponse.data.find(
+          (section: any) => section.sectionName === spot.section_name
+        );
+        
+        if (!matchingSection) {
+          Alert.alert('Error', `Could not find section ${spot.section_name}`);
+          return;
+        }
+        
+        // Check if section has available capacity
+        if (matchingSection.availableCapacity <= 0) {
+          Alert.alert(
+            'Section Full',
+            `Section ${spot.section_name} is currently at full capacity. Please try another section.`,
+            [{ text: 'OK', style: 'default' }]
+          );
+          return;
+        }
+        
+        // Store section info for booking
+        setSelectedSpotForBooking({
+          ...spot,
+          sectionId: matchingSection.sectionId,
+          isCapacitySection: true
+        });
+        
+        // Show vehicle selection modal for capacity booking
+        setIsVehicleSelectionModalVisible(true);
+        return;
+      } catch (error) {
+        hideLoading();
+        console.error('Error loading capacity section:', error);
+        Alert.alert('Error', 'Failed to load section details');
+        return;
+      }
+    }
+    
     // Store the selected spot for booking
     setSelectedSpotForBooking(spot);
     console.log('✅ selectedSpotForBooking set to:', spot);
@@ -952,6 +1010,70 @@ export default function HomeScreen() {
         return;
       }
       
+      // Check if this is a capacity section (motorcycle/bicycle section)
+      const isCapacitySection = spot.isCapacitySection || (!spot.parking_spot_id || spot.parking_spot_id === 0);
+      
+      if (isCapacitySection) {
+        console.log('🏍️ Booking capacity section:', spot);
+        
+        // Verify we have sectionId
+        if (!spot.sectionId) {
+          console.error('❌ Missing sectionId for capacity booking:', spot);
+          Alert.alert('Error', 'Section information is missing. Please try again.');
+          return;
+        }
+        
+        console.log('🚀 Calling ApiService.reserveCapacity with sectionId:', spot.sectionId);
+        
+        const response = await ApiService.reserveCapacity(spot.sectionId, {
+          vehicleId: vehicle.id,
+          spotNumber: spot.spot_number || spot.spotNumber || spot.section_name,
+          areaId,
+        });
+        
+        console.log('🎯 Capacity booking response:', JSON.stringify(response, null, 2));
+        
+        if (response.success) {
+          const bookingDetails = response.data?.bookingDetails;
+          Alert.alert(
+            'Success',
+            `Section ${bookingDetails?.sectionName || spot.section_name || spot.spot_number} booked successfully!`,
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  requestAnimationFrame(() => {
+                    setTimeout(() => {
+                      router.push({
+                        pathname: '/screens/ActiveParkingScreen',
+                        params: {
+                          capacityReservationId: response.data?.reservationId?.toString() ?? '',
+                          isCapacitySection: 'true',
+                          sectionId: spot.sectionId?.toString() ?? '',
+                          sectionName: bookingDetails?.sectionName || spot.section_name || spot.spot_number,
+                          vehiclePlate: bookingDetails?.vehiclePlate || vehicle?.plate_number || '',
+                          vehicleType: bookingDetails?.vehicleType || vehicle?.vehicle_type || '',
+                          vehicleBrand: bookingDetails?.vehicleBrand || vehicle?.brand || '',
+                          vehicleColor: vehicle?.color ?? '',
+                          areaName: bookingDetails?.areaName || selectedParkingArea?.name || spot.location_name || '',
+                          areaLocation: bookingDetails?.areaLocation || selectedParkingArea?.location || spot.location_address || ''
+                        }
+                      });
+                      setSelectedSpotForBooking(null);
+                      setSelectedVehicleForParking(null);
+                      setSelectedParkingArea(null);
+                    }, 200);
+                  });
+                }
+              }
+            ]
+          );
+        } else {
+          Alert.alert('Error', response.message || 'Failed to book section');
+        }
+        return;
+      }
+      
       console.log('🚀 Calling ApiService.bookParkingSpot with:', {
         vehicleId: vehicle.id,
         spotId: spot.parking_spot_id,
@@ -1073,14 +1195,15 @@ export default function HomeScreen() {
     console.log('🎯 selectedParkingArea:', selectedParkingArea);
     console.log('🎯 selectedSpotForBooking:', selectedSpotForBooking);
     
+    // Check if this is called from frequent spots booking flow (including capacity sections)
+    if (selectedVehicle && selectedSpotForBooking) {
+      console.log('🎯 Using frequent spots booking flow');
+      // Use the new handler for frequent spots
+      await handleVehicleSelectedForSpot(selectedVehicle);
+      return;
+    }
+    
     if (selectedVehicle && selectedParkingArea) {
-      // Check if this is called from frequent spots booking flow
-      if (selectedSpotForBooking) {
-        console.log('🎯 Using frequent spots booking flow');
-        // Use the new handler for frequent spots
-        await handleVehicleSelectedForSpot(selectedVehicle);
-        return;
-      }
       
       console.log('🎯 Using regular parking area booking flow');
       // Original flow for regular parking area booking

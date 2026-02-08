@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const QRCode = require('qrcode');
 
 const DEBUG_CAPACITY = process.env.DEBUG_CAPACITY === 'true';
 
@@ -117,7 +119,7 @@ router.post('/sections/:sectionId/reserve', authenticateToken, async (req, res) 
       
       // Check if section exists and has capacity
       const [sectionCheck] = await connection.execute(`
-        SELECT capacity as total_capacity, section_name, parked_count, reserved_count, vehicle_type
+        SELECT capacity as total_capacity, section_name, parked_count, reserved_count, vehicle_type, parking_area_id
         FROM parking_section 
         WHERE parking_section_id = ? AND section_mode = 'capacity_only'
       `, [sectionId]);
@@ -144,30 +146,111 @@ router.post('/sections/:sectionId/reserve', authenticateToken, async (req, res) 
       
       // For capacity-based sections, we don't need individual parking spots
       // Just create a reservation tied to the section itself
-      const [reservationResult] = await connection.execute(`
-        INSERT INTO reservations 
-        (user_id, parking_spots_id, booking_status, time_stamp, start_time, end_time, QR, qr_key)
-        VALUES (?, ?, 'reserved', NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 24 HOUR), ?, ?)
-      `, [userId, sectionId, `CAP-${Date.now()}-${userId}`, `CAP-${Date.now()}-${userId}`]);
+      const { reservationId, vehicleId, spotNumber, areaId } = req.body || {};
+      const wantsDetailedReservation = !!(vehicleId && spotNumber);
+      let responsePayload = null;
       
-      // Increment reserved_count for the section
-      await connection.execute(`
-        UPDATE parking_section 
-        SET reserved_count = reserved_count + 1 
-        WHERE parking_section_id = ?
-      `, [sectionId]);
+      if (wantsDetailedReservation) {
+        const [vehicleRows] = await connection.execute(
+          `SELECT vehicle_id, plate_number, vehicle_type, brand, color FROM vehicles WHERE vehicle_id = ? AND user_id = ?`,
+          [vehicleId, userId]
+        );
+        if (vehicleRows.length === 0) {
+          await connection.rollback();
+          return res.status(404).json({
+            success: false,
+            message: 'Vehicle not found for this user'
+          });
+        }
+        const vehicle = vehicleRows[0];
+        
+        const [conflictRows] = await connection.execute(
+          `SELECT reservation_id FROM reservations WHERE parking_section_id = ? AND spot_number = ? AND booking_status IN ('reserved', 'active')`,
+          [sectionId, spotNumber]
+        );
+        if (conflictRows.length > 0) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Spot is already reserved or active'
+          });
+        }
+        
+        const qrKey = uuidv4();
+        const qrData = { qr_key: qrKey };
+        const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(qrData), {
+          width: 256,
+          margin: 2,
+          color: { dark: '#000000', light: '#FFFFFF' }
+        });
+        
+        const [reservationResult] = await connection.execute(`
+          INSERT INTO reservations (
+            user_id, vehicle_id, parking_spots_id, parking_section_id, spot_number,
+            booking_status, time_stamp, start_time, end_time, QR, qr_key
+          ) VALUES (?, ?, 0, ?, ?, 'reserved', NOW(), NULL, NULL, ?, ?)
+        `, [userId, vehicleId, sectionId, spotNumber, qrCodeDataURL, qrKey]);
+        
+        await connection.execute(`
+          UPDATE parking_section 
+          SET reserved_count = reserved_count + 1 
+          WHERE parking_section_id = ?
+        `, [sectionId]);
+        
+        const [areaRows] = await connection.execute(
+          `SELECT parking_area_name, location FROM parking_area WHERE parking_area_id = ?`,
+          [areaId || section.parking_area_id]
+        );
+        const area = areaRows[0] || {};
+        
+        responsePayload = {
+          success: true,
+          message: `Capacity reserved in section ${section.section_name}`,
+          data: {
+            reservationId: reservationResult.insertId,
+            qrCode: qrCodeDataURL,
+            qrKey,
+            bookingDetails: {
+              reservationId: reservationResult.insertId,
+              vehiclePlate: vehicle.plate_number,
+              vehicleType: vehicle.vehicle_type,
+              vehicleBrand: vehicle.brand,
+              areaName: area.parking_area_name || section.section_name,
+              areaLocation: area.location || '',
+              sectionName: section.section_name,
+              spotNumber,
+              spotType: section.vehicle_type,
+              status: 'reserved',
+              startTime: null
+            }
+          }
+        };
+      } else {
+        const [reservationResult] = await connection.execute(`
+          INSERT INTO reservations 
+          (user_id, parking_spots_id, booking_status, time_stamp, start_time, end_time, QR, qr_key)
+          VALUES (?, ?, 'reserved', NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 24 HOUR), ?, ?)
+        `, [userId, sectionId, `CAP-${Date.now()}-${userId}`, `CAP-${Date.now()}-${userId}`]);
+        
+        await connection.execute(`
+          UPDATE parking_section 
+          SET reserved_count = reserved_count + 1 
+          WHERE parking_section_id = ?
+        `, [sectionId]);
+        
+        responsePayload = {
+          success: true,
+          message: `Capacity reserved in section ${section.section_name}`,
+          data: {
+            reservationId: reservationResult.insertId,
+            sectionName: section.section_name,
+            remainingCapacity: availableCapacity - 1
+          }
+        };
+      }
       
       await connection.commit();
-      
-      res.json({
-        success: true,
-        message: `Capacity reserved in section ${section.section_name}`,
-        data: {
-          reservationId: reservationResult.insertId,
-          sectionName: section.section_name,
-          remainingCapacity: availableCapacity - 1
-        }
-      });
+      res.json(responsePayload);
       
     } catch (error) {
       await connection.rollback();
