@@ -1380,6 +1380,10 @@ const ActiveParkingScreen: React.FC = () => {
 
   // Function to load spot statuses from backend (with smooth update like attendant dashboard)
   const loadSpotStatuses = async (areaId: number, skipChangeCheck = false) => {
+    if (!isAuthenticated) {
+      console.log('🔐 Skipping loadSpotStatuses - user not authenticated');
+      return;
+    }
     try {
       console.log('📊 Loading spot statuses for area:', areaId);
       const response = await ApiService.getParkingSpotsStatus(areaId);
@@ -1443,6 +1447,10 @@ const ActiveParkingScreen: React.FC = () => {
 
   // Function to load SVG content using AJAX
   const loadSvgContent = async (forceRefresh = false) => {
+    if (!isAuthenticated) {
+      console.log('🔐 Skipping loadSvgContent - user not authenticated');
+      return;
+    }
     if (!bookingData?.parkingArea?.id) return;
     
     // Clear existing content if forcing refresh
@@ -1492,6 +1500,10 @@ const ActiveParkingScreen: React.FC = () => {
 
   // Fetch capacity sections from database (same as attendant)
   const fetchCapacitySections = async (areaId: number) => {
+    if (!isAuthenticated) {
+      console.log('🔐 Skipping fetchCapacitySections - user not authenticated');
+      return;
+    }
     try {
       console.log('🔄 Fetching capacity sections from database...');
       const response = await ApiService.getCapacityStatus(areaId);
@@ -1576,7 +1588,7 @@ const ActiveParkingScreen: React.FC = () => {
         isLayoutLoadingRef.current = false;
       }
     })();
-  }, [activeTab, bookingData?.parkingArea?.id]);
+  }, [activeTab, bookingData?.parkingArea?.id, isAuthenticated]);
 
   // Auto-center SVG when layout tab is activated and content is loaded
   useEffect(() => {
@@ -2317,6 +2329,11 @@ const ActiveParkingScreen: React.FC = () => {
 
   // Real-time polling for spot status updates (like attendant dashboard)
   useEffect(() => {
+    if (!isAuthenticated) {
+      console.log('🔐 User not authenticated - skipping real-time spot polling');
+      return;
+    }
+
     if (activeTab !== 'layout' || !bookingData?.parkingArea?.id) {
       return; // Only poll when layout tab is active
     }
@@ -3100,13 +3117,13 @@ const ActiveParkingScreen: React.FC = () => {
           if (response.message && response.message.includes('already in favorites')) {
             Alert.alert(
               'Already in Favorites!',
-              `${bookingData.parkingSpot.spotType === 'motorcycle' ? 'Section' : 'Parking spot'} ${bookingData.parkingSpot.spotNumber} at ${bookingData.parkingArea.name} is already in your favorites.`,
+              `${bookingData.parkingSlot?.spotType === 'motorcycle' ? 'Section' : 'Parking spot'} ${bookingData.parkingSlot?.spotNumber ?? 'Unknown'} at ${bookingData.parkingArea?.name ?? 'this area'} is already in your favorites.`,
               [{ text: 'OK' }]
             );
           } else {
             Alert.alert(
               'Added to Favorites!',
-              `${bookingData.parkingSlot.spotType === 'motorcycle' ? 'Section' : 'Parking spot'} ${bookingData.parkingSlot.spotNumber} at ${bookingData.parkingArea.name} has been added to your favorites.`,
+              `${bookingData.parkingSlot?.spotType === 'motorcycle' ? 'Section' : 'Parking spot'} ${bookingData.parkingSlot?.spotNumber ?? 'Unknown'} at ${bookingData.parkingArea?.name ?? 'this area'} has been added to your favorites.`,
               [{ text: 'OK' }]
             );
           }

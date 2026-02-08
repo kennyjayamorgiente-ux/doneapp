@@ -47,6 +47,23 @@ interface VehicleType {
   available: number;
 }
 
+const normalizeVehicleType = (vehicleType?: string | null) => {
+  if (!vehicleType) return 'unknown';
+  const raw = vehicleType.toString().toLowerCase().trim();
+  if (!raw) return 'unknown';
+  if (raw === 'all') return 'all';
+  if (['bike', 'bicycle', 'bicycles', 'bikes', 'ebike', 'ebikes', 'e-bike', 'e-bikes'].includes(raw)) {
+    return 'bike';
+  }
+  if (['motorcycle', 'motorcycles', 'moto'].includes(raw)) {
+    return 'motorcycle';
+  }
+  if (['car', 'cars'].includes(raw)) {
+    return 'car';
+  }
+  return raw;
+};
+
 interface ParkingSlot {
   id: string;
   slotId: string;
@@ -162,12 +179,13 @@ const DashboardScreen: React.FC = () => {
   const [isPolling, setIsPolling] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const assignedAreaIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     sectionSpotsRef.current = sectionSpots;
   }, [sectionSpots]);
 
-  // Recompute Vehicle Types counts when capacitySections updates (motorcycle sections affect totals)
+  // Recompute Vehicle Types counts when capacitySections updates
   useEffect(() => {
     if (parkingSlots.length === 0 || vehicleTypes.length === 0) return;
     setVehicleTypes(currentTypes => updateVehicleTypesWithRealTimeCounts(parkingSlots, currentTypes));
@@ -987,26 +1005,27 @@ const DashboardScreen: React.FC = () => {
     }
   };
 
-  const fetchCapacitySections = async () => {
+  const fetchCapacitySections = async (areaIdOverride?: number) => {
     try {
       console.log('🔄 Fetching capacity sections...');
       console.log('👤 Attendant profile available:', !!attendantProfile);
       console.log('📍 Attendant profile data:', attendantProfile);
       
       // Get the attendant's assigned area ID
-      const assignedAreaId = attendantProfile?.assignedAreaId || 1;
+      const assignedAreaId = areaIdOverride ?? assignedAreaIdRef.current ?? attendantProfile?.assignedAreaId ?? 1;
       console.log(`📍 Fetching capacity sections for area: ${assignedAreaId}`);
       
       const response = await ApiService.getCapacityStatus(assignedAreaId);
       console.log('📊 Capacity sections response:', response);
       
       if (response.success) {
-        // Filter only motorcycle capacity sections
-        const motorcycleSections = response.data.filter(section => 
-          section.vehicleType.toLowerCase() === 'motorcycle'
-        );
-        console.log('🏍️ Motorcycle capacity sections:', motorcycleSections);
-        setCapacitySections(motorcycleSections);
+        // Normalize vehicle type for consistent comparisons
+        const normalizedSections = response.data.map((section: any) => ({
+          ...section,
+          vehicleType: normalizeVehicleType(section.vehicleType)
+        }));
+        console.log('📊 Normalized capacity sections:', normalizedSections);
+        setCapacitySections(normalizedSections);
       }
     } catch (error) {
       console.error('❌ Error fetching capacity sections:', error);
@@ -1159,7 +1178,7 @@ const DashboardScreen: React.FC = () => {
     
     // Count from individual parking slots
     slots.forEach(slot => {
-      const vehicleType = slot.vehicleType.toLowerCase().trim();
+      const vehicleType = normalizeVehicleType(slot.vehicleType);
       
       if (!counts[vehicleType]) {
         counts[vehicleType] = { total: 0, occupied: 0, available: 0, reserved: 0 };
@@ -1185,26 +1204,16 @@ const DashboardScreen: React.FC = () => {
     
     // Add motorcycle capacity sections counts
     if (capacitySections.length > 0) {
-      const motorcycleCounts = capacitySections.reduce((acc, section) => {
-        acc.total += section.totalCapacity || 0;
-        acc.occupied += section.parkedCount || 0;
-        acc.reserved += section.reservedCount || 0;
-        acc.available += section.availableCapacity || 0;
-        return acc;
-      }, { total: 0, occupied: 0, available: 0, reserved: 0 });
-      
-      // Update or add motorcycle counts
-      const motorcycleKey = 'motorcycle';
-      if (counts[motorcycleKey]) {
-        // If there are individual motorcycle slots, add the capacity section counts
-        counts[motorcycleKey].total += motorcycleCounts.total;
-        counts[motorcycleKey].occupied += motorcycleCounts.occupied;
-        counts[motorcycleKey].reserved += motorcycleCounts.reserved;
-        counts[motorcycleKey].available += motorcycleCounts.available;
-      } else {
-        // If no individual motorcycle slots, use only capacity section counts
-        counts[motorcycleKey] = motorcycleCounts;
-      }
+      capacitySections.forEach(section => {
+        const vehicleType = normalizeVehicleType(section.vehicleType) || 'motorcycle';
+        if (!counts[vehicleType]) {
+          counts[vehicleType] = { total: 0, occupied: 0, available: 0, reserved: 0 };
+        }
+        counts[vehicleType].total += section.totalCapacity || 0;
+        counts[vehicleType].occupied += section.parkedCount || 0;
+        counts[vehicleType].reserved += section.reservedCount || 0;
+        counts[vehicleType].available += section.availableCapacity || 0;
+      });
     }
     
     return counts;
@@ -1304,8 +1313,11 @@ const DashboardScreen: React.FC = () => {
       // First fetch attendant profile to get assigned area
       console.log('👤 Loading attendant profile...');
       const profileResponse = await ApiService.getAttendantProfile();
+      let resolvedAreaId = assignedAreaIdRef.current ?? attendantProfile?.assignedAreaId ?? 1;
       if (profileResponse.success) {
         setAttendantProfile(profileResponse.data.attendantProfile);
+        resolvedAreaId = profileResponse.data.attendantProfile?.assignedAreaId ?? resolvedAreaId;
+        assignedAreaIdRef.current = resolvedAreaId;
         console.log('✅ Attendant profile loaded:', profileResponse.data.attendantProfile);
       }
       
@@ -1315,8 +1327,8 @@ const DashboardScreen: React.FC = () => {
       // Then fetch parking slots (this will also update vehicle type counts with real data)
       await fetchParkingSlots();
       
-      // Then fetch capacity sections for motorcycle sections (now with assigned area)
-      await fetchCapacitySections();
+      // Then fetch capacity sections for assigned area
+      await fetchCapacitySections(resolvedAreaId);
       
       console.log('✅ Dashboard data loaded successfully');
     } catch (error) {
@@ -1698,12 +1710,28 @@ const DashboardScreen: React.FC = () => {
   };
 
   // Render motorcycle capacity sections with individual spots
-  const renderMotorcycleCapacitySections = () => {
+  const renderCapacitySections = () => {
     if (capacitySections.length === 0) {
       return (
         <View style={[styles.noCapacitySections, { padding: getAdaptivePadding(screenDimensions, 20) }]}>
           <Text style={[styles.noCapacityText, { fontSize: getAdaptiveFontSize(screenDimensions, 14) }]}>
-            No motorcycle capacity sections available
+            No capacity sections available
+          </Text>
+        </View>
+      );
+    }
+
+    const normalizedSelectedType = normalizeVehicleType(selectedVehicleType);
+    const sectionsToShow = capacitySections.filter(section => {
+      if (normalizedSelectedType === 'all') return true;
+      return normalizeVehicleType(section.vehicleType) === normalizedSelectedType;
+    });
+
+    if (sectionsToShow.length === 0) {
+      return (
+        <View style={[styles.noCapacitySections, { padding: getAdaptivePadding(screenDimensions, 20) }]}>
+          <Text style={[styles.noCapacityText, { fontSize: getAdaptiveFontSize(screenDimensions, 14) }]}>
+            No capacity sections available for this vehicle type
           </Text>
         </View>
       );
@@ -1717,7 +1745,7 @@ const DashboardScreen: React.FC = () => {
         alignItems: 'flex-start',
         marginTop: getAdaptiveSpacing(screenDimensions, 10),
       }}>
-        {capacitySections.map(section => {
+        {sectionsToShow.map(section => {
           // Calculate capacity stats from capacity section data
           const totalCapacity = section.totalCapacity;
           const occupied = section.parkedCount || 0;
@@ -1755,269 +1783,265 @@ const DashboardScreen: React.FC = () => {
                 marginBottom: getAdaptiveSpacing(screenDimensions, 15)
               }
             ]}>
-          {/* Section Header */}
-          <View style={styles.capacitySectionHeader}>
-            <Text style={[styles.capacitySectionTitle, { fontSize: getAdaptiveFontSize(screenDimensions, 18) }]}>
-              {section.sectionName}
-            </Text>
-            <Text style={[styles.capacitySectionSubtitle, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
-              Motorcycle Section
-            </Text>
-          </View>
-          
-          {/* Capacity Stats */}
-          <View style={styles.capacityStats}>
-            {section.status === 'unavailable' ? (
-              <View style={[styles.capacityStatItem, { flex: 1 }]}>
-                <Text style={[styles.capacityStatNumber, { color: '#8E8E93', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
-                  UNAVAILABLE
+              {/* Section Header */}
+              <View style={styles.capacitySectionHeader}>
+                <Text style={[styles.capacitySectionTitle, { fontSize: getAdaptiveFontSize(screenDimensions, 18) }]}>
+                  {section.sectionName}
                 </Text>
-                <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
-                  Section Closed
+                <Text style={[styles.capacitySectionSubtitle, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
+                  {section.vehicleType === 'bike' ? 'Bicycle Section' : `${section.vehicleType?.charAt(0).toUpperCase() || 'M'}${section.vehicleType?.slice(1) || ''} Section`}
                 </Text>
               </View>
-            ) : (
-              <>
-                <View style={styles.capacityStatItem}>
-                  <Text style={[styles.capacityStatNumber, { fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
-                    {totalCapacity}
-                  </Text>
-                  <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
-                    Total
-                  </Text>
-                </View>
-                
-                <View style={styles.capacityStatItem}>
-                  <Text style={[styles.capacityStatNumber, { color: '#60FF84', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
-                    {available}
-                  </Text>
-                  <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
-                    Available
-                  </Text>
-                </View>
-                
-                <View style={styles.capacityStatItem}>
-                  <Text style={[styles.capacityStatNumber, { color: '#FF6C6C', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
-                    {occupied}
-                  </Text>
-                  <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
-                    Occupied
-                  </Text>
-                </View>
-
-                <View style={styles.capacityStatItem}>
-                  <Text style={[styles.capacityStatNumber, { color: '#FF9500', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
-                    {reserved}
-                  </Text>
-                  <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
-                    Reserved
-                  </Text>
-                </View>
-              </>
-            )}
-          </View>
-
-          {/* Utilization Bar */}
-          <View style={styles.utilizationBar}>
-            <View style={[
-              styles.utilizationFill,
-              { 
-                width: `${parseFloat(section.utilizationRate)}%`,
-                backgroundColor: parseFloat(section.utilizationRate) > 80 ? '#FF6C6C' : 
-                               parseFloat(section.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
-              }
-            ]} />
-          </View>
-
-          {/* Individual Spots Grid */}
-          <View style={styles.spotsGridContainer}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <TouchableOpacity 
-                style={styles.showSpotsButton}
-                onPress={() => {
-                  if (spots.length === 0 && !isLoadingSpots) {
-                    fetchMotorcycleSpots(section.sectionId);
-                  } else if (spots.length > 0) {
-                    // Toggle: close the spots by clearing them
-                    setSectionSpots(prev => ({ ...prev, [section.sectionId]: [] }));
-                  }
-                }}
-              >
-                <Text style={[styles.showSpotsButtonText, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
-                  {isLoadingSpots ? 'Loading spots...' : spots.length > 0 ? 'Hide Individual Spots' : 'Show Individual Spots'}
-                </Text>
-                {!isLoadingSpots && (
-                  <Ionicons 
-                    name={spots.length > 0 ? "chevron-up" : "chevron-down"} 
-                    size={16} 
-                    color="#007AFF" 
-                  />
-                )}
-              </TouchableOpacity>
-
-              {/* Settings Icon */}
-              <TouchableOpacity
-                style={{
-                  padding: 8,
-                  borderRadius: 8,
-                  backgroundColor: '#f8f9fa',
-                  borderWidth: 1,
-                  borderColor: '#e9ecef'
-                }}
-                onPress={() => {
-                  setSelectedSectionForSettings(section);
-                  setSectionUnavailableReason('');
-                  setShowSectionSettingsModal(true);
-                }}
-              >
-                <MaterialIcons name="settings" size={16} color="#666" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Spots Grid */}
-            {spots.length > 0 && (
-              <View style={[
-                styles.spotsGrid,
-                {
-                  flexDirection: viewMode === 'list' ? 'column' : 'row',
-                  flexWrap: viewMode === 'list' ? 'nowrap' : 'wrap',
-                  justifyContent: 'flex-start',
-                  marginTop: 8,
-                  gap: screenDimensions.isTablet ? 6 : 4,
-                }
-              ]}>
-                {spots.map((spot) => (
-                  <TouchableOpacity
-                    key={spot.spotId}
-                    style={[
-                      styles.parkingSlot,
-                      { 
-                        backgroundColor: getSpotColor(spot.status, spot.isUserBooked),
-                        width: viewMode === 'list' ? '100%' : (screenDimensions.isTablet ? 120 : 102),
-                        height: viewMode === 'list' ? 'auto' : (screenDimensions.isTablet ? 150 : 131),
-                        padding: viewMode === 'list' ? getAdaptivePadding(screenDimensions, 12) : getAdaptivePadding(screenDimensions, 6),
-                        marginBottom: viewMode === 'list' ? getAdaptiveSpacing(screenDimensions, 8) : 0,
-                        flexDirection: viewMode === 'list' ? 'row' : 'column',
-                        alignItems: viewMode === 'list' ? 'center' : 'center',
-                        justifyContent: viewMode === 'list' ? 'space-between' : 'center',
-                      }
-                    ]}
-                    onPress={() => handleMotorcycleSpotPress(spot, section.sectionId, section.sectionName)}
-                  >
-                    {/* Spot Number and Status for List View */}
-                    {viewMode === 'list' && (
-                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                        <View style={{
-                          width: screenDimensions.isTablet ? 50 : 40,
-                          height: screenDimensions.isTablet ? 50 : 40,
-                          borderRadius: 8,
-                          backgroundColor: getSpotColor(spot.status, spot.isUserBooked),
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          marginRight: 12
-                        }}>
-                          <Text style={[styles.slotId, { 
-                            fontSize: getAdaptiveFontSize(screenDimensions, 12),
-                            color: '#FFFFFF',
-                            fontWeight: 'bold'
-                          }]}>{spot.spotNumber}</Text>
-                        </View>
-                        
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.slotId, { 
-                            fontSize: getAdaptiveFontSize(screenDimensions, 14),
-                            fontWeight: 'bold',
-                            marginBottom: 2
-                          }]}>
-                            Spot {spot.spotNumber}
-                          </Text>
-                          <Text style={[styles.slotVehicleType, { 
-                            fontSize: getAdaptiveFontSize(screenDimensions, 12),
-                            color: '#666'
-                          }]}>
-                            Motorcycle • {spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
-                          </Text>
-                          {spot.reservation && (
-                            <Text style={[styles.slotStatus, { 
-                              fontSize: getAdaptiveFontSize(screenDimensions, 11),
-                              color: '#666',
-                              marginTop: 2
-                            }]}>
-                              {spot.reservation.userName} • {spot.reservation.plateNumber}
-                            </Text>
-                          )}
-                        </View>
-                        
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <SvgXml
-                            xml={getVehicleIcon('motorcycle')}
-                            width={screenDimensions.isTablet ? 28 : 24}
-                            height={screenDimensions.isTablet ? 24 : 20}
-                            style={{ marginBottom: 4 }}
-                          />
-                          {spot.isUserBooked && (
-                            <View style={[styles.userBookedIndicator, { 
-                              backgroundColor: '#8A0000',
-                              paddingHorizontal: 4,
-                              paddingVertical: 2
-                            }]}>
-                              <Ionicons name="person" size={10} color="#FFFFFF" />
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    )}
+              
+              {/* Capacity Stats */}
+              <View style={styles.capacityStats}>
+                {section.status === 'unavailable' ? (
+                  <View style={[styles.capacityStatItem, { flex: 1 }]}>
+                    <Text style={[styles.capacityStatNumber, { color: '#8E8E93', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
+                      UNAVAILABLE
+                    </Text>
+                    <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
+                      Section Closed
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.capacityStatItem}>
+                      <Text style={[styles.capacityStatNumber, { fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
+                        {totalCapacity}
+                      </Text>
+                      <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
+                        Total
+                      </Text>
+                    </View>
                     
-                    {/* Grid View Content */}
-                    {viewMode === 'grid' && (
-                      <>
-                        <Text style={[styles.slotId, { 
-                          fontSize: getAdaptiveFontSize(screenDimensions, 12),
-                          color: '#FFFFFF'
-                        }]}>{spot.spotNumber}</Text>
-                        <Text style={[styles.slotVehicleType, { 
-                          fontSize: getAdaptiveFontSize(screenDimensions, 10),
-                          color: 'rgba(255, 255, 255, 0.8)'
-                        }]}>Motorcycle</Text>
-                        <SvgXml
-                          xml={getVehicleIcon('motorcycle')}
-                          width={screenDimensions.isTablet ? 24 : 20}
-                          height={screenDimensions.isTablet ? 20 : 16}
-                          style={styles.slotIcon}
-                        />
-                        <Text style={[styles.slotStatus, { 
-                          fontSize: getAdaptiveFontSize(screenDimensions, 10),
-                          color: 'rgba(255, 255, 255, 0.9)'
-                        }]}>
-                          {spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
-                        </Text>
-                        {spot.isUserBooked && (
-                          <View style={styles.userBookedIndicator}>
-                            <Ionicons name="person" size={8} color="#FFFFFF" />
-                          </View>
-                        )}
-                      </>
+                    <View style={styles.capacityStatItem}>
+                      <Text style={[styles.capacityStatNumber, { color: '#60FF84', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
+                        {available}
+                      </Text>
+                      <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
+                        Available
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.capacityStatItem}>
+                      <Text style={[styles.capacityStatNumber, { color: '#FF6C6C', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
+                        {occupied}
+                      </Text>
+                      <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
+                        Occupied
+                      </Text>
+                    </View>
+
+                    <View style={styles.capacityStatItem}>
+                      <Text style={[styles.capacityStatNumber, { color: '#FF9500', fontSize: getAdaptiveFontSize(screenDimensions, 24) }]}>
+                        {reserved}
+                      </Text>
+                      <Text style={[styles.capacityStatLabel, { fontSize: getAdaptiveFontSize(screenDimensions, 10) }]}>
+                        Reserved
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </View>
+
+              {/* Utilization Bar */}
+              <View style={styles.utilizationBar}>
+                <View style={[
+                  styles.utilizationFill,
+                  { 
+                    width: `${parseFloat(section.utilizationRate)}%`,
+                    backgroundColor: parseFloat(section.utilizationRate) > 80 ? '#FF6C6C' : 
+                                   parseFloat(section.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
+                  }
+                ]} />
+              </View>
+
+              {/* Individual Spots Grid */}
+              <View style={styles.spotsGridContainer}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <TouchableOpacity 
+                    style={styles.showSpotsButton}
+                    onPress={() => {
+                      if (spots.length === 0 && !isLoadingSpots) {
+                        fetchMotorcycleSpots(section.sectionId);
+                      } else if (spots.length > 0) {
+                        // Toggle: close the spots by clearing them
+                        setSectionSpots(prev => ({ ...prev, [section.sectionId]: [] }));
+                      }
+                    }}
+                  >
+                    <Text style={[styles.showSpotsButtonText, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
+                      {isLoadingSpots ? 'Loading spots...' : spots.length > 0 ? 'Hide Individual Spots' : 'Show Individual Spots'}
+                    </Text>
+                    {!isLoadingSpots && (
+                      <Ionicons 
+                        name={spots.length > 0 ? "chevron-up" : "chevron-down"} 
+                        size={16} 
+                        color="#007AFF" 
+                      />
                     )}
                   </TouchableOpacity>
-                ))}
+
+                  {/* Settings Icon */}
+                  <TouchableOpacity
+                    style={{
+                      padding: 8,
+                      borderRadius: 8,
+                      backgroundColor: '#f8f9fa',
+                      borderWidth: 1,
+                      borderColor: '#e9ecef'
+                    }}
+                    onPress={() => {
+                      setSelectedSectionForSettings(section);
+                      setSectionUnavailableReason('');
+                      setShowSectionSettingsModal(true);
+                    }}
+                  >
+                    <MaterialIcons name="settings" size={16} color="#666" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Spots Grid */}
+                {spots.length > 0 && (
+                  <View style={[
+                    styles.spotsGrid,
+                    {
+                      flexDirection: viewMode === 'list' ? 'column' : 'row',
+                      flexWrap: viewMode === 'list' ? 'nowrap' : 'wrap',
+                      justifyContent: 'flex-start',
+                      marginTop: 8,
+                      gap: screenDimensions.isTablet ? 6 : 4,
+                    }
+                  ]}>
+                    {spots.map((spot) => (
+                      <TouchableOpacity
+                        key={spot.spotId}
+                        style={[
+                          styles.parkingSlot,
+                          { 
+                            backgroundColor: getSpotColor(spot.status, spot.isUserBooked),
+                            width: viewMode === 'list' ? '100%' : (screenDimensions.isTablet ? 120 : 102),
+                            height: viewMode === 'list' ? 'auto' : (screenDimensions.isTablet ? 150 : 131),
+                            padding: viewMode === 'list' ? getAdaptivePadding(screenDimensions, 12) : getAdaptivePadding(screenDimensions, 6),
+                            marginBottom: viewMode === 'list' ? getAdaptiveSpacing(screenDimensions, 8) : 0,
+                            flexDirection: viewMode === 'list' ? 'row' : 'column',
+                            alignItems: viewMode === 'list' ? 'center' : 'center',
+                            justifyContent: viewMode === 'list' ? 'space-between' : 'center',
+                          }
+                        ]}
+                        onPress={() => handleMotorcycleSpotPress(spot, section.sectionId, section.sectionName)}
+                      >
+                        {/* Spot Number and Status for List View */}
+                        {viewMode === 'list' && (
+                          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{
+                              width: screenDimensions.isTablet ? 50 : 40,
+                              height: screenDimensions.isTablet ? 50 : 40,
+                              borderRadius: 8,
+                              backgroundColor: getSpotColor(spot.status, spot.isUserBooked),
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              marginRight: 12
+                            }}>
+                              <Text style={[styles.slotId, { 
+                                fontSize: getAdaptiveFontSize(screenDimensions, 12),
+                                color: '#FFFFFF',
+                                fontWeight: 'bold'
+                              }]}>{spot.spotNumber}</Text>
+                            </View>
+                            
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.slotId, { 
+                                fontSize: getAdaptiveFontSize(screenDimensions, 14),
+                                fontWeight: 'bold',
+                                marginBottom: 2
+                              }]}>
+                                Spot {spot.spotNumber}
+                              </Text>
+                              <Text style={[styles.slotVehicleType, { 
+                                fontSize: getAdaptiveFontSize(screenDimensions, 12),
+                                color: '#666'
+                              }]}>
+                                {section.vehicleType} • {spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
+                              </Text>
+                              {spot.reservation && (
+                                <Text style={[styles.slotStatus, { 
+                                  fontSize: getAdaptiveFontSize(screenDimensions, 11),
+                                  color: '#666',
+                                  marginTop: 2
+                                }]}>
+                                  {spot.reservation.userName} • {spot.reservation.plateNumber}
+                                </Text>
+                              )}
+                            </View>
+                            
+                            <View style={{ alignItems: 'flex-end' }}>
+                              <SvgXml
+                                xml={getVehicleIcon(section.vehicleType)}
+                                width={screenDimensions.isTablet ? 28 : 24}
+                                height={screenDimensions.isTablet ? 24 : 20}
+                                style={{ marginBottom: 4 }}
+                              />
+                              {spot.isUserBooked && (
+                                <View style={[styles.userBookedIndicator, { 
+                                  backgroundColor: '#8A0000',
+                                  paddingHorizontal: 4,
+                                  paddingVertical: 2
+                                }]}>
+                                  <Ionicons name="person" size={10} color="#FFFFFF" />
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                        )}
+                        
+                        {/* Grid View Content */}
+                        {viewMode === 'grid' && (
+                          <>
+                            <Text style={[styles.slotId, { 
+                              fontSize: getAdaptiveFontSize(screenDimensions, 12),
+                              color: '#FFFFFF'
+                            }]}>{spot.spotNumber}</Text>
+                            <Text style={[styles.slotVehicleType, { 
+                              fontSize: getAdaptiveFontSize(screenDimensions, 10),
+                              color: 'rgba(255, 255, 255, 0.8)'
+                            }]}>{section.vehicleType}</Text>
+                            <SvgXml
+                              xml={getVehicleIcon(section.vehicleType)}
+                              width={screenDimensions.isTablet ? 24 : 20}
+                              height={screenDimensions.isTablet ? 20 : 16}
+                              style={styles.slotIcon}
+                            />
+                            <Text style={[styles.slotStatus, { 
+                              fontSize: getAdaptiveFontSize(screenDimensions, 10),
+                              color: 'rgba(255, 255, 255, 0.9)'
+                            }]}>
+                              {spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
+                            </Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
               </View>
-            )}
-          </View>
-        </View>
-      );
-    })}
-  </View>
+            </View>
+          );
+        })}
+      </View>
     );
   };
 
   const renderSection = (section: string, filteredSlots: ParkingSlot[] = parkingSlots) => {
     // Check if this is a motorcycle capacity section
-    const motorcycleSection = capacitySections.find(cap => cap.sectionName === section);
+    const matchedCapacitySection = capacitySections.find(cap => cap.sectionName === section);
     
-    if (motorcycleSection && selectedVehicleType === 'motorcycle') {
+    const normalizedSelectedType = normalizeVehicleType(selectedVehicleType);
+    if (matchedCapacitySection && (normalizedSelectedType === 'all' || normalizeVehicleType(matchedCapacitySection.vehicleType) === normalizedSelectedType)) {
       // Render motorcycle capacity section with original card design
-      const spots = sectionSpots[motorcycleSection.sectionId] || [];
-      const isLoadingSpots = loadingSpots[motorcycleSection.sectionId] || false;
+      const spots = sectionSpots[matchedCapacitySection.sectionId] || [];
+      const isLoadingSpots = loadingSpots[matchedCapacitySection.sectionId] || false;
 
       const getSpotColor = (status: string, isUserBooked: boolean) => {
         if (isUserBooked) return '#8A0000'; // Maroon for user's booking (consistent with app theme)
@@ -2049,26 +2073,26 @@ const DashboardScreen: React.FC = () => {
               {section}
             </Text>
             <Text style={[styles.capacitySectionSubtitle, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
-              Motorcycle Section
+              {matchedCapacitySection.vehicleType === 'bike' ? 'Bicycle Section' : `${matchedCapacitySection.vehicleType?.charAt(0).toUpperCase() || 'M'}${matchedCapacitySection.vehicleType?.slice(1) || ''} Section`}
             </Text>
           </View>
           
           {/* Capacity Stats */}
           <View style={styles.capacityStats}>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.totalCapacity}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.totalCapacity}</Text>
               <Text style={styles.capacityStatLabel}>Total</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.parkedCount || 0}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.parkedCount || 0}</Text>
               <Text style={styles.capacityStatLabel}>Occupied</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.reservedCount || 0}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.reservedCount || 0}</Text>
               <Text style={styles.capacityStatLabel}>Reserved</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.availableCapacity}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.availableCapacity}</Text>
               <Text style={styles.capacityStatLabel}>Available</Text>
             </View>
           </View>
@@ -2078,9 +2102,9 @@ const DashboardScreen: React.FC = () => {
             <View style={[
               styles.utilizationFill,
               {
-                width: `${parseFloat(motorcycleSection.utilizationRate)}%`,
-                backgroundColor: parseFloat(motorcycleSection.utilizationRate) > 80 ? '#FF6C6C' : 
-                               parseFloat(motorcycleSection.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
+                width: `${parseFloat(matchedCapacitySection.utilizationRate)}%`,
+                backgroundColor: parseFloat(matchedCapacitySection.utilizationRate) > 80 ? '#FF6C6C' : 
+                               parseFloat(matchedCapacitySection.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
               }
             ]} />
           </View>
@@ -2092,9 +2116,9 @@ const DashboardScreen: React.FC = () => {
                 style={styles.showSpotsButton}
                 onPress={() => {
                   if (spots.length === 0 && !isLoadingSpots) {
-                    fetchMotorcycleSpots(motorcycleSection.sectionId);
+                    fetchMotorcycleSpots(matchedCapacitySection.sectionId);
                   } else if (spots.length > 0) {
-                    setSectionSpots(prev => ({ ...prev, [motorcycleSection.sectionId]: [] }));
+                    setSectionSpots(prev => ({ ...prev, [matchedCapacitySection.sectionId]: [] }));
                   }
                 }}
               >
@@ -2120,7 +2144,7 @@ const DashboardScreen: React.FC = () => {
                   borderColor: '#e9ecef'
                 }}
                 onPress={() => {
-                  setSelectedSectionForSettings(motorcycleSection);
+                  setSelectedSectionForSettings(matchedCapacitySection);
                   setSectionUnavailableReason('');
                   setShowSectionSettingsModal(true);
                 }}
@@ -2145,7 +2169,7 @@ const DashboardScreen: React.FC = () => {
                   const mockSlot: ParkingSlot = {
                     id: spot.spotId,
                     slotId: spot.spotNumber,
-                    vehicleType: 'motorcycle',
+                    vehicleType: matchedCapacitySection.vehicleType,
                     status: spot.status === 'active' ? 'occupied' : spot.status,
                     section: section,
                     occupantName: spot.reservation ? spot.reservation.userName : '',
@@ -2168,7 +2192,7 @@ const DashboardScreen: React.FC = () => {
                           justifyContent: viewMode === 'list' ? 'space-between' : 'center',
                         }
                       ]}
-                      onPress={() => handleMotorcycleSpotPress(spot, motorcycleSection.sectionId, motorcycleSection.sectionName)}
+                      onPress={() => handleMotorcycleSpotPress(spot, matchedCapacitySection.sectionId, matchedCapacitySection.sectionName)}
                     >
                       {/* Spot Number and Status for List View */}
                       {viewMode === 'list' && (
@@ -2201,7 +2225,7 @@ const DashboardScreen: React.FC = () => {
                               fontSize: getAdaptiveFontSize(screenDimensions, 12),
                               color: '#666'
                             }]}>
-                              Motorcycle • {spot.status === 'active' ? 'Occupied' : spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
+                              {matchedCapacitySection.vehicleType} • {spot.status === 'active' ? 'Occupied' : spot.status.charAt(0).toUpperCase() + spot.status.slice(1)}
                             </Text>
                             {spot.reservation && (
                               <Text style={[styles.slotStatus, { 
@@ -2216,7 +2240,7 @@ const DashboardScreen: React.FC = () => {
                           
                           <View style={{ alignItems: 'flex-end' }}>
                             <SvgXml
-                              xml={getVehicleIcon('motorcycle')}
+                              xml={getVehicleIcon(matchedCapacitySection.vehicleType)}
                               width={screenDimensions.isTablet ? 28 : 24}
                               height={screenDimensions.isTablet ? 24 : 20}
                               style={{ marginBottom: 4 }}
@@ -2244,9 +2268,9 @@ const DashboardScreen: React.FC = () => {
                           <Text style={[styles.slotVehicleType, { 
                             fontSize: getAdaptiveFontSize(screenDimensions, 10),
                             color: 'rgba(255, 255, 255, 0.8)'
-                          }]}>Motorcycle</Text>
+                          }]}>{matchedCapacitySection.vehicleType}</Text>
                           <SvgXml
-                            xml={getVehicleIcon('motorcycle')}
+                            xml={getVehicleIcon(matchedCapacitySection.vehicleType)}
                             width={screenDimensions.isTablet ? 24 : 20}
                             height={screenDimensions.isTablet ? 20 : 16}
                             style={styles.slotIcon}
@@ -2432,12 +2456,12 @@ const DashboardScreen: React.FC = () => {
   // List view section rendering function
   const renderSectionList = (section: string, filteredSlots: ParkingSlot[] = parkingSlots) => {
     // Check if this is a motorcycle capacity section
-    const motorcycleSection = capacitySections.find(cap => cap.sectionName === section);
+    const matchedCapacitySection = capacitySections.find(cap => cap.sectionName === section);
     
-    if (motorcycleSection && selectedVehicleType === 'motorcycle') {
+    if (matchedCapacitySection && (selectedVehicleType === 'all' || matchedCapacitySection.vehicleType === (selectedVehicleType === 'ebike' ? 'bike' : selectedVehicleType))) {
       // Render motorcycle capacity section in list view
-      const spots = sectionSpots[motorcycleSection.sectionId] || [];
-      const isLoadingSpots = loadingSpots[motorcycleSection.sectionId] || false;
+      const spots = sectionSpots[matchedCapacitySection.sectionId] || [];
+      const isLoadingSpots = loadingSpots[matchedCapacitySection.sectionId] || false;
 
       const getSpotColor = (status: string, isUserBooked: boolean) => {
         if (isUserBooked) return '#8A0000'; // Maroon for user's booking (consistent with app theme)
@@ -2463,26 +2487,26 @@ const DashboardScreen: React.FC = () => {
               {section}
             </Text>
             <Text style={[styles.capacitySectionSubtitle, { fontSize: getAdaptiveFontSize(screenDimensions, 12) }]}>
-              Motorcycle Section
+              {matchedCapacitySection.vehicleType === 'bike' ? 'Bicycle Section' : `${matchedCapacitySection.vehicleType?.charAt(0).toUpperCase() || 'M'}${matchedCapacitySection.vehicleType?.slice(1) || ''} Section`}
             </Text>
           </View>
           
           {/* Capacity Stats */}
           <View style={styles.capacityStats}>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.totalCapacity}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.totalCapacity}</Text>
               <Text style={styles.capacityStatLabel}>Total</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.parkedCount || 0}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.parkedCount || 0}</Text>
               <Text style={styles.capacityStatLabel}>Occupied</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.reservedCount || 0}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.reservedCount || 0}</Text>
               <Text style={styles.capacityStatLabel}>Reserved</Text>
             </View>
             <View style={styles.capacityStatItem}>
-              <Text style={styles.capacityStatNumber}>{motorcycleSection.availableCapacity}</Text>
+              <Text style={styles.capacityStatNumber}>{matchedCapacitySection.availableCapacity}</Text>
               <Text style={styles.capacityStatLabel}>Available</Text>
             </View>
           </View>
@@ -2492,9 +2516,9 @@ const DashboardScreen: React.FC = () => {
             <View style={[
               styles.utilizationFill,
               {
-                width: `${parseFloat(motorcycleSection.utilizationRate)}%`,
-                backgroundColor: parseFloat(motorcycleSection.utilizationRate) > 80 ? '#FF6C6C' : 
-                               parseFloat(motorcycleSection.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
+                width: `${parseFloat(matchedCapacitySection.utilizationRate)}%`,
+                backgroundColor: parseFloat(matchedCapacitySection.utilizationRate) > 80 ? '#FF6C6C' : 
+                               parseFloat(matchedCapacitySection.utilizationRate) > 60 ? '#FFCC00' : '#60FF84'
               }
             ]} />
           </View>
@@ -2506,9 +2530,9 @@ const DashboardScreen: React.FC = () => {
                 style={styles.showSpotsButton}
                 onPress={() => {
                   if (spots.length === 0 && !isLoadingSpots) {
-                    fetchMotorcycleSpots(motorcycleSection.sectionId);
+                    fetchMotorcycleSpots(matchedCapacitySection.sectionId);
                   } else if (spots.length > 0) {
-                    setSectionSpots(prev => ({ ...prev, [motorcycleSection.sectionId]: [] }));
+                    setSectionSpots(prev => ({ ...prev, [matchedCapacitySection.sectionId]: [] }));
                   }
                 }}
               >
@@ -2534,7 +2558,7 @@ const DashboardScreen: React.FC = () => {
                   borderColor: '#e9ecef'
                 }}
                 onPress={() => {
-                  setSelectedSectionForSettings(motorcycleSection);
+                  setSelectedSectionForSettings(matchedCapacitySection);
                   setSectionUnavailableReason('');
                   setShowSectionSettingsModal(true);
                 }}
@@ -2556,7 +2580,7 @@ const DashboardScreen: React.FC = () => {
                         minHeight: screenDimensions.isTablet ? 80 : 70
                       }
                     ]}
-                    onPress={() => handleMotorcycleSpotPress(spot, motorcycleSection.sectionId, motorcycleSection.sectionName)}
+                    onPress={() => handleMotorcycleSpotPress(spot, matchedCapacitySection.sectionId, matchedCapacitySection.sectionName)}
                   >
                     <View style={styles.slotMainInfoList}>
                       <Text style={[styles.slotIdList, { fontSize: getAdaptiveFontSize(screenDimensions, 14) }]}>{spot.spotNumber}</Text>
@@ -2801,25 +2825,36 @@ const DashboardScreen: React.FC = () => {
           {/* Parking Slots Grid/List */}
           <View style={styles.parkingSlotsContainer}>
             {(() => {
-              // If motorcycle filter is selected, show motorcycle capacity sections
-              if (selectedVehicleType === 'motorcycle') {
-                return renderMotorcycleCapacitySections();
+                          const capacityVehicleTypes = ['motorcycle', 'bike'];
+              const normalizedSelectedType = normalizeVehicleType(selectedVehicleType);
+              const shouldShowCapacitySections = selectedVehicleType === 'all' || capacityVehicleTypes.includes(normalizedSelectedType);
+
+              const capacityContent = shouldShowCapacitySections ? renderCapacitySections() : null;
+
+              // When specifically filtering to capacity-based vehicle types, only show those sections
+              if (capacityVehicleTypes.includes(normalizedSelectedType) && selectedVehicleType !== 'all') {
+                return capacityContent;
               }
-              
-              // For other filters, show regular parking sections
-              // Filter out ALL motorcycle spots - they should only appear as capacity sections
+
+              // For "all" or non-capacity filters, render capacity sections (if any) followed by regular slots
+              // Filter out capacity vehicle types from the regular parking slots list to avoid duplicates
               const filteredParkingSlots = parkingSlots.filter(slot => 
-                slot.vehicleType?.toLowerCase() !== 'motorcycle'
+                !capacityVehicleTypes.includes(normalizeVehicleType(slot.vehicleType))
               );
-              
-              // Get unique sections that actually have parking slots (excluding all motorcycle spots)
-              let sectionsWithSlots = [...new Set(filteredParkingSlots.map(slot => slot.section))];
-              
-              console.log('🎯 Rendering sections with slots (all motorcycles filtered):', sectionsWithSlots);
-              
-              return viewMode === 'list' 
+
+              const sectionsWithSlots = [...new Set(filteredParkingSlots.map(slot => slot.section))];
+              console.log('🎯 Rendering sections with slots (capacity types removed):', sectionsWithSlots);
+
+              const regularContent = viewMode === 'list'
                 ? sectionsWithSlots.map(section => renderSectionList(section, filteredParkingSlots))
                 : sectionsWithSlots.map(section => renderSection(section, filteredParkingSlots));
+
+              return (
+                <>
+                  {capacityContent}
+                  {regularContent}
+                </>
+              );
             })()}
           </View>
 

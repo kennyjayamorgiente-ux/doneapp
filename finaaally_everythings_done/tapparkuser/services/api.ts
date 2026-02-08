@@ -571,26 +571,34 @@ export class ApiService {
   }
 
   // Vehicle endpoints
-  // Client-side vehicle cache with debouncing
-  private static vehicleCache: { data: any; timestamp: number; ttl: number } | null = null;
-  private static pendingVehicleRequest: Promise<any> | null = null;
+  // Client-side vehicle cache with debouncing (scoped per authenticated user)
+  private static vehicleCache: { data: any; timestamp: number; ttl: number; tokenHash: string | null } | null = null;
+  private static pendingVehicleRequest: { promise: Promise<any>; tokenHash: string | null } | null = null;
   private static readonly VEHICLE_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
   static async getVehicles() {
+    const token = await this.getStoredToken();
+    const tokenHash = token ? this.getTokenHash(token) : null;
+
     // Check if we have a valid cache
-    if (this.vehicleCache && (Date.now() - this.vehicleCache.timestamp) < this.vehicleCache.ttl) {
+    if (
+      tokenHash &&
+      this.vehicleCache &&
+      this.vehicleCache.tokenHash === tokenHash &&
+      (Date.now() - this.vehicleCache.timestamp) < this.vehicleCache.ttl
+    ) {
       console.log('🚗 Serving vehicles from client-side cache');
       return this.vehicleCache.data;
     }
 
     // If there's already a pending request, return it
-    if (this.pendingVehicleRequest) {
+    if (this.pendingVehicleRequest && this.pendingVehicleRequest.tokenHash === tokenHash) {
       console.log('🚗 Returning pending vehicle request');
-      return this.pendingVehicleRequest;
+      return this.pendingVehicleRequest.promise;
     }
 
     // Create the request
-    this.pendingVehicleRequest = this.request<{
+    const requestPromise = this.request<{
       success: boolean;
       data: {
         vehicles: Array<{
@@ -607,22 +615,26 @@ export class ApiService {
       };
     }>('/vehicles');
 
+    this.pendingVehicleRequest = { promise: requestPromise, tokenHash };
+
     try {
-      const result = await this.pendingVehicleRequest;
+      const result = await requestPromise;
       
       // Cache the result if successful
-      if (result.success) {
+      if (result.success && tokenHash) {
         this.vehicleCache = {
           data: result,
           timestamp: Date.now(),
-          ttl: result.data.cached ? this.VEHICLE_CACHE_TTL / 2 : this.VEHICLE_CACHE_TTL // Shorter cache if server was cached
+          ttl: this.VEHICLE_CACHE_TTL,
+          tokenHash
         };
       }
       
       return result;
     } finally {
-      // Clear the pending request
-      this.pendingVehicleRequest = null;
+      if (this.pendingVehicleRequest?.promise === requestPromise) {
+        this.pendingVehicleRequest = null;
+      }
     }
   }
 
@@ -1238,30 +1250,41 @@ export class ApiService {
     }>('/subscriptions/balance');
   }
 
-  // Client-side frequent spots cache
-  private static frequentSpotsCache: { data: any; timestamp: number; ttl: number } | null = null;
-  private static pendingFrequentSpotsRequest: Promise<any> | null = null;
+  // Client-side frequent spots cache (scoped per authenticated user & limit)
+  private static frequentSpotsCache: { data: any; timestamp: number; ttl: number; tokenHash: string | null; limit: number } | null = null;
+  private static pendingFrequentSpotsRequest: { promise: Promise<any>; tokenHash: string | null; limit: number } | null = null;
   private static readonly FREQUENT_SPOTS_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
   // Get frequently used parking spots
   static async getFrequentSpots(limit: number = 5) {
-    const cacheKey = `frequent_spots_${limit}`;
     const now = Date.now();
+    const token = await this.getStoredToken();
+    const tokenHash = token ? this.getTokenHash(token) : null;
     
     // Check if we have a valid cache
-    if (this.frequentSpotsCache && (now - this.frequentSpotsCache.timestamp) < this.frequentSpotsCache.ttl) {
+    if (
+      tokenHash &&
+      this.frequentSpotsCache &&
+      this.frequentSpotsCache.tokenHash === tokenHash &&
+      this.frequentSpotsCache.limit === limit &&
+      (now - this.frequentSpotsCache.timestamp) < this.frequentSpotsCache.ttl
+    ) {
       console.log('🔥 Serving frequent spots from client-side cache');
       return this.frequentSpotsCache.data;
     }
 
     // If there's already a pending request, return it
-    if (this.pendingFrequentSpotsRequest) {
+    if (
+      this.pendingFrequentSpotsRequest &&
+      this.pendingFrequentSpotsRequest.tokenHash === tokenHash &&
+      this.pendingFrequentSpotsRequest.limit === limit
+    ) {
       console.log('🔥 Returning pending frequent spots request');
-      return this.pendingFrequentSpotsRequest;
+      return this.pendingFrequentSpotsRequest.promise;
     }
 
     // Create the request
-    this.pendingFrequentSpotsRequest = this.request<{
+    const requestPromise = this.request<{
       success: boolean;
       data: {
         frequent_spots: Array<{
@@ -1279,22 +1302,27 @@ export class ApiService {
       };
     }>(`/history/frequent-spots?limit=${limit}`);
 
+    this.pendingFrequentSpotsRequest = { promise: requestPromise, tokenHash, limit };
+
     try {
-      const result = await this.pendingFrequentSpotsRequest;
+      const result = await requestPromise;
       
       // Cache the result if successful
-      if (result.success) {
+      if (result.success && tokenHash) {
         this.frequentSpotsCache = {
           data: result,
           timestamp: now,
-          ttl: result.data.cached ? this.FREQUENT_SPOTS_CACHE_TTL / 2 : this.FREQUENT_SPOTS_CACHE_TTL
+          ttl: result.data.cached ? this.FREQUENT_SPOTS_CACHE_TTL / 2 : this.FREQUENT_SPOTS_CACHE_TTL,
+          tokenHash,
+          limit
         };
       }
       
       return result;
     } finally {
-      // Clear the pending request
-      this.pendingFrequentSpotsRequest = null;
+      if (this.pendingFrequentSpotsRequest?.promise === requestPromise) {
+        this.pendingFrequentSpotsRequest = null;
+      }
     }
   }
 
