@@ -31,6 +31,9 @@ import { PENDING_EXPIRATION_STORAGE_KEY } from '../constants/storageKeys';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
+const RESERVATION_HOLD_MINUTES = 15;
+const RESERVATION_HOLD_MS = RESERVATION_HOLD_MINUTES * 60 * 1000;
+
 // Enhanced responsive calculations
 const isSmallScreen = screenWidth < 375;
 const isMediumScreen = screenWidth >= 375 && screenWidth < 414;
@@ -122,7 +125,7 @@ const ActiveParkingScreen: React.FC = () => {
   const params = useLocalSearchParams();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { hideLoading } = useLoading(); // Add this to force hide loading
   const activeParkingScreenStyles = getActiveParkingScreenStyles(colors);
   const screenDimensions = useScreenDimensions();
@@ -226,6 +229,7 @@ const ActiveParkingScreen: React.FC = () => {
   }>>(new Map());
   const lastLoadedLayoutAreaIdRef = useRef<number | null>(null);
   const isLayoutLoadingRef = useRef(false);
+  const previousUserIdRef = useRef<number | string | null>(null);
 
   useEffect(() => {
     if (!bookingData?.reservationId) {
@@ -285,6 +289,39 @@ const ActiveParkingScreen: React.FC = () => {
   const parkingStartTime = useRef<number | null>(null);
   const totalParkingTime = 60 * 60; // 1 hour total parking time in seconds
 
+  const resetBookingState = useCallback(() => {
+    setBookingData(null);
+    setBookingError(null);
+    setElapsedTime(0);
+    setParkingEndTime(null);
+    setQrScanned(false);
+    setIsTimerRunning(false);
+    parkingStartTime.current = null;
+  }, []);
+
+  useEffect(() => {
+    const currentUserId = user?.user_id ?? null;
+
+    if (!isAuthenticated) {
+      if (bookingData) {
+        resetBookingState();
+      }
+      previousUserIdRef.current = null;
+      return;
+    }
+
+    if (
+      previousUserIdRef.current !== null &&
+      currentUserId !== null &&
+      previousUserIdRef.current !== currentUserId
+    ) {
+      console.log('🔐 ActiveParkingScreen: user changed, clearing booking state');
+      resetBookingState();
+    }
+
+    previousUserIdRef.current = currentUserId;
+  }, [bookingData, isAuthenticated, resetBookingState, user?.user_id]);
+
   // Format duration helper
   const formatDuration = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
@@ -298,7 +335,7 @@ const ActiveParkingScreen: React.FC = () => {
   // Grace period helper functions
   const calculateGracePeriodDeadline = (createdAt: string) => {
     const created = new Date(createdAt);
-    const deadline = new Date(created.getTime() + (1 * 60 * 1000)); // Add 1 minute
+    const deadline = new Date(created.getTime() + RESERVATION_HOLD_MS);
     return deadline.toLocaleTimeString('en-US', { 
       hour: 'numeric', 
       minute: '2-digit',
@@ -308,7 +345,7 @@ const ActiveParkingScreen: React.FC = () => {
 
   const calculateTimeRemaining = (createdAt: string) => {
     const created = new Date(createdAt);
-    const deadline = created.getTime() + (1 * 60 * 1000); // 1 minute
+    const deadline = created.getTime() + RESERVATION_HOLD_MS;
     const now = Date.now();
     return Math.max(0, deadline - now);
   };
@@ -4632,7 +4669,7 @@ const ActiveParkingScreen: React.FC = () => {
               
               <View style={activeParkingScreenStyles.gracePeriodModalContent}>
                 <Text style={activeParkingScreenStyles.gracePeriodModalText}>
-                  You have 1 minute to check in at the parking area.
+                  You have {RESERVATION_HOLD_MINUTES} minutes to check in at the parking area.
                 </Text>
                 
                 <Text style={activeParkingScreenStyles.gracePeriodModalText}>
