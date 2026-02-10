@@ -213,6 +213,11 @@ export default function HomeScreen() {
   const [selectedSpotForBooking, setSelectedSpotForBooking] = useState<any>(null);
   const [showVehicleMismatchModal, setShowVehicleMismatchModal] = useState(false);
   const [mismatchData, setMismatchData] = useState<any>(null);
+
+  // State for insufficient balance modal
+  const [showInsufficientBalanceModal, setShowInsufficientBalanceModal] = useState(false);
+  const [insufficientBalanceMessage, setInsufficientBalanceMessage] = useState<string>('');
+
   const [canScrollVehicles, setCanScrollVehicles] = useState(false);
   const vehicleScrollViewWidth = useRef(0);
   const vehicleContentWidth = useRef(0);
@@ -353,13 +358,16 @@ export default function HomeScreen() {
           setVehicles(response.data.vehicles);
           setUserVehicles(response.data.vehicles);
         } else {
-          console.log('❌ No vehicles data received');
+          console.log('❌ Failed to load vehicles');
+          Alert.alert('Error', 'Failed to load vehicles');
           setVehicles([]);
           setUserVehicles([]);
         }
       } catch (error) {
         console.error('Error fetching vehicles:', error);
         Alert.alert('Error', 'Failed to load vehicles');
+        setVehicles([]);
+        setUserVehicles([]);
       } finally {
         setIsLoadingVehicles(false);
       }
@@ -388,11 +396,14 @@ export default function HomeScreen() {
         if (response.success && response.data?.frequent_spots) {
           setFrequentSpots(response.data.frequent_spots);
         } else {
-          console.log('No frequent spots found or failed to load');
+          console.log('❌ Failed to load frequent spots');
+          Alert.alert('Error', 'Failed to load frequent spots');
           setFrequentSpots([]);
         }
     } catch (error) {
         console.error('Error fetching frequent spots:', error);
+        Alert.alert('Error', 'Failed to load frequent spots');
+        setFrequentSpots([]);
     } finally {
         setIsLoadingFrequentSpots(false);
     }
@@ -413,6 +424,8 @@ export default function HomeScreen() {
         if (response.success && response.data?.frequent_spots) {
           setFrequentSpots(response.data.frequent_spots);
           console.log('🔄 Frequent spots availability updated');
+        } else {
+          console.log('❌ Failed to update frequent spots during polling');
         }
       } catch (error) {
         console.error('Error polling frequent spots:', error);
@@ -519,12 +532,14 @@ export default function HomeScreen() {
       if (response.success && response.data?.locations) {
         setParkingAreas(response.data.locations);
       } else {
-        console.log('❌ No parking areas data received');
+        console.log('❌ Failed to load parking areas');
+        Alert.alert('Error', 'Failed to load parking areas');
         setParkingAreas([]);
       }
     } catch (error) {
       console.error('Error fetching parking areas:', error);
       Alert.alert('Error', 'Failed to load parking areas');
+      setParkingAreas([]);
     } finally {
       setIsLoadingParkingAreas(false);
     }
@@ -538,11 +553,14 @@ export default function HomeScreen() {
       if (response.success) {
         setParkingSpots(response.data.spots);
       } else {
+        console.log('❌ Failed to load parking spots');
         Alert.alert('Error', 'Failed to load parking spots');
+        setParkingSpots([]);
       }
     } catch (error) {
       console.error('Error fetching parking spots:', error);
       Alert.alert('Error', 'Failed to load parking spots');
+      setParkingSpots([]);
     } finally {
       setIsLoadingParkingSpots(false);
     }
@@ -682,21 +700,39 @@ export default function HomeScreen() {
             }
           ]
         );
+        setIsBookingModalVisible(false);
+        setSelectedVehicleForParking(null);
+        setSelectedParkingArea(null);
+        setParkingSpots([]);
       } else {
         // Check if it's a vehicle type mismatch
         if ((response.data as any)?.errorCode === 'VEHICLE_TYPE_MISMATCH') {
           setMismatchData((response.data as any).data);
           setShowVehicleMismatchModal(true);
+        } else if ((response.data as any)?.errorCode === 'INSUFFICIENT_BALANCE') {
+          setInsufficientBalanceMessage((response.data as any)?.message || 'You have no remaining subscription hours. Please purchase a plan before reserving a spot.');
+          setShowInsufficientBalanceModal(true);
         } else {
-          Alert.alert('Error', response.data?.message || 'Failed to book parking spot');
+          Alert.alert('Booking Failed', response.data?.message || 'Failed to book parking spot');
         }
       }
-    } catch (error) {
-      console.error('Error booking parking spot:', error);
-      Alert.alert('Error', 'Failed to book parking spot');
+    } catch (error: any) {
+      // Check if it's an insufficient balance error
+      if (error.message && (
+        error.message.includes('You have no remaining subscription hours') ||
+        error.message.includes('Please purchase a plan') ||
+        error.message.includes('insufficient balance')
+      )) {
+        setIsBookingModalVisible(false);
+        setIsModalVisible(false);
+        setIsVehicleSelectionModalVisible(false);
+        setInsufficientBalanceMessage(error.message);
+        setShowInsufficientBalanceModal(true);
+      } else {
+        Alert.alert('Booking Failed', 'Failed to book parking spot');
+      }
     }
   };
-
 
   const handleCloseModal = () => {
     setIsModalVisible(false);
@@ -801,13 +837,70 @@ export default function HomeScreen() {
         if ((response.data as any)?.errorCode === 'VEHICLE_TYPE_MISMATCH') {
           setMismatchData((response.data as any).data);
           setShowVehicleMismatchModal(true);
+        } else if ((response.data as any)?.errorCode === 'INSUFFICIENT_BALANCE') {
+          setIsBookingModalVisible(false);
+          setIsModalVisible(false);
+          setIsVehicleSelectionModalVisible(false);
+          setInsufficientBalanceMessage((response.data as any)?.message || 'You have no remaining subscription hours. Please purchase a plan before reserving a spot.');
+          setShowInsufficientBalanceModal(true);
         } else {
-          Alert.alert('Error', response.data?.message || 'Failed to book parking spot');
+          Alert.alert('Booking Failed', response.data?.message || 'Failed to book parking spot');
         }
       }
-    } catch (error) {
-      console.error('Error booking parking spot:', error);
-      Alert.alert('Error', 'Failed to book parking spot');
+    } catch (error: any) {
+      // Check if it's an insufficient balance error
+      if (error.message && (
+        error.message.includes('You have no remaining subscription hours') ||
+        error.message.includes('Please purchase a plan') ||
+        error.message.includes('insufficient balance')
+      )) {
+        setIsBookingModalVisible(false);
+        setIsModalVisible(false);
+        setIsVehicleSelectionModalVisible(false);
+        setInsufficientBalanceMessage(error.message);
+        setShowInsufficientBalanceModal(true);
+      } else if (error?.message?.includes('no longer available') || 
+                 error?.message?.includes('not available') ||
+                 error?.message?.includes('SPOT_UNAVAILABLE')) {
+        // Automatically fetch a new available spot without asking user
+        if (selectedParkingArea) {
+          try {
+            setIsLoadingParkingSpots(true);
+            const response = await ApiService.getParkingSpots(selectedParkingArea.id, selectedVehicleForParking?.vehicle_type);
+            if (response.success && response.data.spots.length > 0) {
+              setParkingSpots(response.data.spots);
+              // Auto-select the first available spot and show booking modal
+              const newSpot = response.data.spots[0];
+              setAssignedSlot(newSpot.spot_number);
+              setAssignedSpotDetails(newSpot);
+              setIsBookingModalVisible(true);
+              
+              // Show a brief notification that a new spot was found
+              Alert.alert(
+                'New Spot Assigned',
+                `Previous spot was already reserved. Spot ${newSpot.spot_number} is now available for booking.`,
+                [{ text: 'OK', style: 'default' }]
+              );
+            } else {
+              Alert.alert(
+                'No Spots Available',
+                'No parking spots are currently available in this area. Please try another area.',
+                [{ text: 'OK', style: 'default' }]
+              );
+            }
+          } catch (refetchError) {
+            Alert.alert(
+              'Failed to Update',
+              'Could not fetch updated parking spots. Please try again.',
+              [{ text: 'OK', style: 'default' }]
+            );
+          } finally {
+            setIsLoadingParkingSpots(false);
+          }
+        }
+      } else {
+        Alert.alert('Booking Failed', 'Failed to book parking spot');
+      }
     }
   };
 
@@ -1148,6 +1241,9 @@ export default function HomeScreen() {
         if ((response.data as any)?.errorCode === 'VEHICLE_TYPE_MISMATCH') {
           setMismatchData((response.data as any).data);
           setShowVehicleMismatchModal(true);
+        } else if ((response.data as any)?.errorCode === 'INSUFFICIENT_BALANCE') {
+          setInsufficientBalanceMessage((response.data as any)?.message || 'You have no remaining subscription hours. Please purchase a plan before reserving a spot.');
+          setShowInsufficientBalanceModal(true);
         } else if ((response.data as any)?.errorCode === 'SPOT_UNAVAILABLE' || 
                    (response.data as any)?.message?.includes('no longer available') ||
                    (response.data as any)?.message?.includes('not available')) {
@@ -1157,23 +1253,62 @@ export default function HomeScreen() {
             [{ text: 'OK', style: 'default' }]
           );
         } else {
-          Alert.alert('Error', response.data?.message || 'Failed to book parking spot');
+          Alert.alert('Booking Failed', response.data?.message || 'Failed to book parking spot');
         }
       }
     } catch (error: any) {
-      console.error('Error booking parking spot:', error);
-      
       // Check if error is about spot not being available
       if (error?.message?.includes('no longer available') || 
           error?.message?.includes('not available') ||
           error?.message?.includes('SPOT_UNAVAILABLE')) {
-        Alert.alert(
-          'Spot Not Available',
-          'This parking spot is no longer available. It may have been booked by another user. Please try a different spot.',
-          [{ text: 'OK', style: 'default' }]
-        );
+        // Automatically fetch a new available spot without asking user
+        if (selectedParkingArea) {
+          try {
+            setIsLoadingParkingSpots(true);
+            const response = await ApiService.getParkingSpots(selectedParkingArea.id, selectedVehicleForParking?.vehicle_type);
+            if (response.success && response.data.spots.length > 0) {
+              setParkingSpots(response.data.spots);
+              // Auto-select the first available spot and show booking modal
+              const newSpot = response.data.spots[0];
+              setAssignedSlot(newSpot.spot_number);
+              setAssignedSpotDetails(newSpot);
+              setIsBookingModalVisible(true);
+              
+              // Show a brief notification that a new spot was found
+              Alert.alert(
+                'New Spot Assigned',
+                `Previous spot was already reserved. Spot ${newSpot.spot_number} is now available for booking.`,
+                [{ text: 'OK', style: 'default' }]
+              );
+            } else {
+              Alert.alert(
+                'No Spots Available',
+                'No parking spots are currently available in this area. Please try another area.',
+                [{ text: 'OK', style: 'default' }]
+              );
+            }
+          } catch (refetchError) {
+            Alert.alert(
+              'Failed to Update',
+              'Could not fetch updated parking spots. Please try again.',
+              [{ text: 'OK', style: 'default' }]
+            );
+          } finally {
+            setIsLoadingParkingSpots(false);
+          }
+        }
+      } else if (error.message && (
+        error.message.includes('You have no remaining subscription hours') ||
+        error.message.includes('Please purchase a plan') ||
+        error.message.includes('insufficient balance')
+      )) {
+        setIsBookingModalVisible(false);
+        setIsModalVisible(false);
+        setIsVehicleSelectionModalVisible(false);
+        setInsufficientBalanceMessage(error.message);
+        setShowInsufficientBalanceModal(true);
       } else {
-        Alert.alert('Error', 'Failed to book parking spot. Please try again.');
+        Alert.alert('Booking Failed', 'Failed to book parking spot. Please try again.');
       }
     }
   };
@@ -3048,10 +3183,13 @@ export default function HomeScreen() {
       if (response.success && response.data?.frequent_spots) {
         setFrequentSpotsForModal(response.data.frequent_spots);
       } else {
+        console.log('❌ Failed to load frequent spots for modal');
+        Alert.alert('Error', 'Failed to load frequent spots');
         setFrequentSpotsForModal([]);
       }
     } catch (error) {
       console.error('Error fetching frequent spots:', error);
+      Alert.alert('Error', 'Failed to load frequent spots');
       setFrequentSpotsForModal([]);
     } finally {
       setIsLoadingFrequentSpotsModal(false);
@@ -4586,6 +4724,62 @@ export default function HomeScreen() {
         onAccept={handleAcceptTerms}
         isLoading={isAcceptingTerms}
       />
+
+      {/* Insufficient Balance Modal */}
+      <Modal
+        visible={showInsufficientBalanceModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowInsufficientBalanceModal(false)}
+      >
+        <View style={homeScreenStyles.modalOverlay}>
+          <View style={homeScreenStyles.insufficientBalanceModalContainer}>
+            <View style={homeScreenStyles.insufficientBalanceModalHeader}>
+              <View style={homeScreenStyles.insufficientBalanceModalIconContainer}>
+                <Ionicons name="wallet-outline" size={40} color="#FF3B30" />
+              </View>
+              <Text style={homeScreenStyles.insufficientBalanceModalTitle}>Insufficient Balance</Text>
+              <Text style={homeScreenStyles.insufficientBalanceModalSubtitle}>You need to purchase a plan to continue</Text>
+            </View>
+            
+            <View style={homeScreenStyles.insufficientBalanceModalContent}>
+              <View style={homeScreenStyles.insufficientBalanceMessageContainer}>
+                <Ionicons name="information-circle-outline" size={24} color="#FF9500" />
+                <Text style={homeScreenStyles.insufficientBalanceMessageText}>
+                  {insufficientBalanceMessage}
+                </Text>
+              </View>
+              
+              <View style={homeScreenStyles.insufficientBalanceSuggestionContainer}>
+                <Ionicons name="card-outline" size={20} color="#007AFF" />
+                <Text style={homeScreenStyles.insufficientBalanceSuggestionText}>
+                  Choose from our flexible parking plans
+                </Text>
+              </View>
+            </View>
+
+            <View style={homeScreenStyles.insufficientBalanceModalActions}>
+              <TouchableOpacity 
+                style={homeScreenStyles.insufficientBalanceModalCancelButton}
+                onPress={() => setShowInsufficientBalanceModal(false)}
+              >
+                <Text style={homeScreenStyles.insufficientBalanceModalCancelText}>Maybe Later</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={homeScreenStyles.insufficientBalanceModalPrimaryButton}
+                onPress={() => {
+                  setShowInsufficientBalanceModal(false);
+                  router.push('/screens/TopUpScreen');
+                }}
+              >
+                <Ionicons name="cart-outline" size={18} color="white" />
+                <Text style={homeScreenStyles.insufficientBalanceModalPrimaryText}>View Plans</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </View>
   );

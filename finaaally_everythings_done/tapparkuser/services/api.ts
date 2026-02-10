@@ -388,6 +388,30 @@ export class ApiService {
           console.error(`❌ Database Error (${response.status}):`, errorMessage);
           throw new Error(errorMessage);
         }
+        // Handle 403 Forbidden - check if it's a business logic error (insufficient balance/penalty)
+        if (response.status === 403) {
+          const errorMessage = data.message || data.error || 'Access denied';
+          // Don't log as error for business logic responses
+          if (data.errorCode === 'INSUFFICIENT_BALANCE' || data.errorCode === 'OUTSTANDING_PENALTY') {
+            console.log(`📋 Business Logic Response (${response.status}):`, errorMessage);
+          } else {
+            console.error(`❌ API Error (${response.status}):`, errorMessage);
+          }
+          throw new Error(errorMessage);
+        }
+        // Handle 400 Bad Request - check if it's a spot availability error
+        if (response.status === 400) {
+          const errorMessage = data.message || data.error || 'Bad request';
+          // Don't log as error for spot availability issues
+          if (errorMessage.includes('no longer available') || 
+              errorMessage.includes('not available') ||
+              errorMessage.includes('spot is no longer available')) {
+            console.log(`📋 Business Logic Response (${response.status}):`, errorMessage);
+          } else {
+            console.error(`❌ API Error (${response.status}):`, errorMessage);
+          }
+          throw new Error(errorMessage);
+        }
         // Include full error details for debugging
         const errorMessage = data.message || data.error || `HTTP error! status: ${response.status}`;
         console.error(`❌ API Error (${response.status}):`, errorMessage);
@@ -460,11 +484,35 @@ export class ApiService {
       
       // Re-throw the error if it's already an Error instance with a message
       if (error instanceof Error) {
-        console.error('❌ API Request failed:', error.message);
+        // Don't log as error for business logic responses
+        if (error.message.includes('You have no remaining subscription hours') ||
+            error.message.includes('penalty hours outstanding') ||
+            error.message.includes('Please purchase a plan') ||
+            error.message.includes('no longer available') ||
+            error.message.includes('not available') ||
+            error.message.includes('spot is no longer available')) {
+          // SILENT - no logging for business logic
+        } else {
+          console.error('❌ API Request failed:', error.message);
+        }
         throw error;
       }
       
-      console.error('❌ API Request failed (unknown error):', error);
+      // Don't log business logic errors as errors
+      const isBusinessLogicError = error instanceof Error && (
+        error.message.includes('You have no remaining subscription hours') ||
+        error.message.includes('penalty hours outstanding') ||
+        error.message.includes('Please purchase a plan') ||
+        error.message.includes('no longer available') ||
+        error.message.includes('not available') ||
+        error.message.includes('spot is no longer available')
+      );
+      
+      if (isBusinessLogicError) {
+        // SILENT - no logging for business logic
+      } else {
+        console.error('❌ API Request failed (unknown error):', error);
+      }
       throw error instanceof Error ? error : new Error(String(error));
     }
   }

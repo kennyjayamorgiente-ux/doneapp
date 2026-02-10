@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SvgXml } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SharedHeader from '../../components/SharedHeader';
 import ApiService from '../../services/api';
 import { addVehicleScreenStyles } from '../styles/addVehicleScreenStyles';
@@ -94,6 +95,7 @@ const VEHICLE_TYPES = [
 ];
 
 export default function AddVehicleScreen() {
+  const insets = useSafeAreaInsets();
   const [vehicleType, setVehicleType] = useState('');
   const [vehicleColor, setVehicleColor] = useState('');
   const [plateNumber, setPlateNumber] = useState('');
@@ -102,6 +104,21 @@ export default function AddVehicleScreen() {
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const pulseAnim = new Animated.Value(1);
+
+  // Form validation errors
+  const [errors, setErrors] = useState({
+    vehicleType: '',
+    plateNumber: '',
+    vehicleColor: '',
+    vehicleBrand: '',
+    vehicleModel: '',
+  });
+
+  // Refs for focusing inputs
+  const plateNumberRef = useRef<TextInput>(null);
+  const vehicleColorRef = useRef<TextInput>(null);
+  const vehicleBrandRef = useRef<TextInput>(null);
+  const vehicleModelRef = useRef<TextInput>(null);
 
   React.useEffect(() => {
     const pulse = Animated.loop(
@@ -127,15 +144,76 @@ export default function AddVehicleScreen() {
     router.back();
   };
 
-  const handleAddVehicle = async () => {
-    // Validate required fields
+  const validateForm = () => {
+    const newErrors = {
+      vehicleType: '',
+      plateNumber: '',
+      vehicleColor: '',
+      vehicleBrand: '',
+      vehicleModel: '',
+    };
+    let hasError = false;
+    let firstErrorField: string | null = null;
+
     if (!vehicleType) {
-      Alert.alert('Error', 'Please select a vehicle type');
-      return;
+      newErrors.vehicleType = 'Vehicle type is required';
+      hasError = true;
+      firstErrorField = 'vehicleType';
     }
-    
+
     if (!plateNumber.trim()) {
-      Alert.alert('Error', 'Please enter a plate number');
+      newErrors.plateNumber = 'Plate number is required';
+      hasError = true;
+      firstErrorField = firstErrorField || 'plateNumber';
+    }
+
+    if (!vehicleColor.trim()) {
+      newErrors.vehicleColor = 'Vehicle color is required';
+      hasError = true;
+      firstErrorField = firstErrorField || 'vehicleColor';
+    }
+
+    if (!vehicleBrand.trim()) {
+      newErrors.vehicleBrand = 'Vehicle brand is required';
+      hasError = true;
+      firstErrorField = firstErrorField || 'vehicleBrand';
+    }
+
+    if (!vehicleModel.trim()) {
+      newErrors.vehicleModel = 'Vehicle model is required';
+      hasError = true;
+      firstErrorField = firstErrorField || 'vehicleModel';
+    }
+
+    setErrors(newErrors);
+
+    if (hasError && firstErrorField) {
+      // Focus the first field with error
+      switch (firstErrorField) {
+        case 'plateNumber':
+          plateNumberRef.current?.focus();
+          break;
+        case 'vehicleColor':
+          vehicleColorRef.current?.focus();
+          break;
+        case 'vehicleBrand':
+          vehicleBrandRef.current?.focus();
+          break;
+        case 'vehicleModel':
+          vehicleModelRef.current?.focus();
+          break;
+        case 'vehicleType':
+          // For dropdown, we'll open it
+          setIsDropdownVisible(true);
+          break;
+      }
+    }
+
+    return !hasError;
+  };
+
+  const handleAddVehicle = async () => {
+    if (!validateForm()) {
       return;
     }
 
@@ -177,10 +255,18 @@ export default function AddVehicleScreen() {
   const handleVehicleTypeSelect = (type: string) => {
     setVehicleType(type);
     setIsDropdownVisible(false);
+    // Clear error when user selects a type
+    if (errors.vehicleType) {
+      setErrors(prev => ({ ...prev, vehicleType: '' }));
+    }
   };
 
   const toggleDropdown = () => {
     setIsDropdownVisible(!isDropdownVisible);
+    // Clear error when user opens dropdown
+    if (errors.vehicleType) {
+      setErrors(prev => ({ ...prev, vehicleType: '' }));
+    }
   };
 
 
@@ -199,7 +285,7 @@ export default function AddVehicleScreen() {
                 }
               ]}
             >
-              <SvgXml xml={circleGlowSvg} width={250} height={250} />
+              <SvgXml xml={circleGlowSvg} width={180} height={180} />
             </Animated.View>
             
             <View style={addVehicleScreenStyles.carContainer}>
@@ -222,24 +308,37 @@ export default function AddVehicleScreen() {
           <View style={addVehicleScreenStyles.inputSection}>
             {/* Vehicle Type Dropdown - FAQ Style */}
             <TouchableOpacity 
-              style={addVehicleScreenStyles.dropdownContainer}
+              style={[
+                addVehicleScreenStyles.dropdownContainer,
+                errors.vehicleType && addVehicleScreenStyles.errorInput
+              ]}
               onPress={toggleDropdown}
               activeOpacity={0.7}
             >
               <View style={addVehicleScreenStyles.dropdownHeader}>
-                <Text style={[addVehicleScreenStyles.dropdownText, !vehicleType && addVehicleScreenStyles.placeholderText]}>
+                <Text style={[
+                  addVehicleScreenStyles.dropdownText, 
+                  !vehicleType && addVehicleScreenStyles.placeholderText,
+                  errors.vehicleType && addVehicleScreenStyles.errorText
+                ]}>
                   {vehicleType ? VEHICLE_TYPES.find(type => type.value === vehicleType)?.label : "Vehicle Type"}
                 </Text>
                 <Ionicons 
                   name="chevron-down" 
                   size={20} 
-                  color="#800000"
+                  color={errors.vehicleType ? "#FF3B30" : "#800000"}
                   style={[
                     addVehicleScreenStyles.chevronIcon,
                     { transform: [{ rotate: isDropdownVisible ? '180deg' : '0deg' }] }
                   ]}
                 />
               </View>
+              
+              {errors.vehicleType && (
+                <Text style={addVehicleScreenStyles.errorHelperText}>
+                  {errors.vehicleType}
+                </Text>
+              )}
               
               {isDropdownVisible && (
                 <View style={addVehicleScreenStyles.dropdownContent}>
@@ -266,40 +365,104 @@ export default function AddVehicleScreen() {
             </TouchableOpacity>
 
             <TextInput
-              style={addVehicleScreenStyles.inputField}
+              style={[
+                addVehicleScreenStyles.inputField,
+                errors.vehicleColor && addVehicleScreenStyles.errorInput
+              ]}
               placeholder="Vehicle Color:"
               placeholderTextColor="#9CA3AF"
               value={vehicleColor}
-              onChangeText={setVehicleColor}
+              onChangeText={(text) => {
+                setVehicleColor(text);
+                // Clear error when user starts typing
+                if (errors.vehicleColor) {
+                  setErrors(prev => ({ ...prev, vehicleColor: '' }));
+                }
+              }}
+              ref={vehicleColorRef}
             />
 
+            {errors.vehicleColor && (
+              <Text style={addVehicleScreenStyles.errorHelperText}>
+                {errors.vehicleColor}
+              </Text>
+            )}
+
             <TextInput
-              style={addVehicleScreenStyles.inputField}
+              style={[
+                addVehicleScreenStyles.inputField,
+                errors.plateNumber && addVehicleScreenStyles.errorInput
+              ]}
               placeholder="Plate Number:"
               placeholderTextColor="#9CA3AF"
               value={plateNumber}
-              onChangeText={setPlateNumber}
+              onChangeText={(text) => {
+                setPlateNumber(text);
+                // Clear error when user starts typing
+                if (errors.plateNumber) {
+                  setErrors(prev => ({ ...prev, plateNumber: '' }));
+                }
+              }}
+              ref={plateNumberRef}
             />
 
+            {errors.plateNumber && (
+              <Text style={addVehicleScreenStyles.errorHelperText}>
+                {errors.plateNumber}
+              </Text>
+            )}
+
             <TextInput
-              style={addVehicleScreenStyles.inputField}
+              style={[
+                addVehicleScreenStyles.inputField,
+                errors.vehicleBrand && addVehicleScreenStyles.errorInput
+              ]}
               placeholder="Vehicle Brand:"
               placeholderTextColor="#9CA3AF"
               value={vehicleBrand}
-              onChangeText={setVehicleBrand}
+              onChangeText={(text) => {
+                setVehicleBrand(text);
+                // Clear error when user starts typing
+                if (errors.vehicleBrand) {
+                  setErrors(prev => ({ ...prev, vehicleBrand: '' }));
+                }
+              }}
+              ref={vehicleBrandRef}
             />
 
+            {errors.vehicleBrand && (
+              <Text style={addVehicleScreenStyles.errorHelperText}>
+                {errors.vehicleBrand}
+              </Text>
+            )}
+
             <TextInput
-              style={addVehicleScreenStyles.inputField}
+              style={[
+                addVehicleScreenStyles.inputField,
+                errors.vehicleModel && addVehicleScreenStyles.errorInput
+              ]}
               placeholder="Vehicle Model:"
               placeholderTextColor="#9CA3AF"
               value={vehicleModel}
-              onChangeText={setVehicleModel}
+              onChangeText={(text) => {
+                setVehicleModel(text);
+                // Clear error when user starts typing
+                if (errors.vehicleModel) {
+                  setErrors(prev => ({ ...prev, vehicleModel: '' }));
+                }
+              }}
+              ref={vehicleModelRef}
             />
+
+            {errors.vehicleModel && (
+              <Text style={addVehicleScreenStyles.errorHelperText}>
+                {errors.vehicleModel}
+              </Text>
+            )}
           </View>
 
           {/* Bottom Section - Buttons */}
-          <View style={addVehicleScreenStyles.bottomSection}>
+          <View style={[addVehicleScreenStyles.bottomSection, { paddingBottom: insets.bottom + 20 }]}>
             <View style={addVehicleScreenStyles.buttonContainer}>
               <TouchableOpacity
                 onPress={handleGoBack}

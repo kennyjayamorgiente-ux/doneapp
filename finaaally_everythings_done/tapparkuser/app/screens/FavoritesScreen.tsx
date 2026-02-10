@@ -467,7 +467,6 @@ const FavoritesScreen: React.FC = () => {
       }
     } catch (error: any) {
       setIsBooking(false);
-      console.error('Error booking parking spot:', error);
       
       // Check if error is about spot not being available
       if (error?.message?.includes('no longer available') || 

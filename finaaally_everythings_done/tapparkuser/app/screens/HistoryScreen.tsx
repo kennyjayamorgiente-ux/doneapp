@@ -523,7 +523,6 @@ const HistoryScreen: React.FC = () => {
       }
     } catch (error: any) {
       setIsBooking(false);
-      console.error('Error booking parking spot:', error);
       
       // Check if it's a specific error message from the API
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
