@@ -313,6 +313,52 @@ export const getActiveParkingScreenStyles = (colors: ThemeColors) => StyleSheet.
     alignItems: 'center',
     justifyContent: 'center',
   },
+  timerBackgroundCircle: {
+    position: 'absolute',
+    width: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    height: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    borderRadius: isSmallScreen ? getResponsiveSize(90) : getResponsiveSize(110),
+    backgroundColor: colors.backgroundSecondary,
+    borderWidth: getResponsiveSize(10),
+    borderColor: colors.border,
+  },
+  timerProgressContainer: {
+    position: 'absolute',
+    width: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    height: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerProgressSvg: {
+    position: 'absolute',
+    width: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    height: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    borderRadius: isSmallScreen ? getResponsiveSize(90) : getResponsiveSize(110),
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
+  timerProgressFill: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.primary,
+    borderTopLeftRadius: isSmallScreen ? getResponsiveSize(90) : getResponsiveSize(110),
+    borderTopRightRadius: isSmallScreen ? getResponsiveSize(90) : getResponsiveSize(110),
+    width: '100%',
+  },
+  timerProgressArc: {
+    position: 'absolute',
+    width: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    height: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
+    borderRadius: isSmallScreen ? getResponsiveSize(90) : getResponsiveSize(110),
+    borderWidth: getResponsiveSize(10),
+    borderColor: 'transparent',
+    borderTopColor: colors.primary,
+    borderRightColor: colors.primary,
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+  },
   timerCircle: {
     width: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
     height: isSmallScreen ? getResponsiveSize(180) : getResponsiveSize(220),
@@ -339,11 +385,16 @@ export const getActiveParkingScreenStyles = (colors: ThemeColors) => StyleSheet.
   timerContent: {
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 10, // Ensure content stays above progress fill
   },
   timerText: {
     fontSize: getResponsiveFontSize(36),
     fontWeight: 'bold',
-    color: colors.textSecondary,
     marginBottom: getResponsiveMargin(8),
   },
   timerLabels: {
@@ -353,7 +404,6 @@ export const getActiveParkingScreenStyles = (colors: ThemeColors) => StyleSheet.
   },
   timerLabel: {
     fontSize: getResponsiveFontSize(16),
-    color: colors.textSecondary,
     textAlign: 'center',
   },
   parkingDetailsCard: {

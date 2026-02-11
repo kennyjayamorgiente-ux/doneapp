@@ -463,6 +463,79 @@ export const getHomeScreenStyles = (colors: ThemeColors) => StyleSheet.create({
     marginBottom: getResponsiveMargin(24),
     gap: getResponsiveMargin(12),
   },
+  // Step Flow Indicator Styles
+  stepFlowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: getResponsiveMargin(20),
+    paddingHorizontal: getResponsivePadding(16),
+  },
+  stepIndicator: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  stepCircle: {
+    width: getResponsiveSize(32),
+    height: getResponsiveSize(32),
+    borderRadius: getResponsiveSize(16),
+    backgroundColor: colors.gray300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: getResponsiveMargin(8),
+  },
+  stepCircleActive: {
+    backgroundColor: colors.primary,
+  },
+  stepCircleCompleted: {
+    backgroundColor: colors.success,
+  },
+  stepText: {
+    fontSize: getResponsiveFontSize(12),
+    color: colors.textSecondary,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  stepTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  stepTextCompleted: {
+    color: colors.success,
+    fontWeight: '600',
+  },
+  stepDivider: {
+    flex: 1,
+    height: 2,
+    backgroundColor: colors.gray300,
+    marginHorizontal: getResponsiveMargin(8),
+  },
+  stepDividerActive: {
+    backgroundColor: colors.primary,
+  },
+  stepDividerCompleted: {
+    backgroundColor: colors.success,
+  },
+  // Parking Area Section Styles
+  parkingAreaSection: {
+    marginBottom: getResponsiveMargin(20),
+  },
+  parkingAreaSectionTitle: {
+    fontSize: getResponsiveFontSize(18),
+    fontWeight: '700',
+    color: colors.primary,
+    marginBottom: getResponsiveMargin(12),
+    paddingHorizontal: getResponsivePadding(4),
+    borderBottomWidth: 2,
+    borderBottomColor: colors.primary,
+    paddingBottom: getResponsivePadding(8),
+  },
+  parkingAreaSectionDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: getResponsiveMargin(16),
+    marginHorizontal: getResponsivePadding(8),
+  },
   parkingAreaButton: {
     backgroundColor: colors.card,
     borderWidth: 1,

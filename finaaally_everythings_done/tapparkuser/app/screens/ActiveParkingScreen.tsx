@@ -278,6 +278,8 @@ const ActiveParkingScreen: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState(0); // Track elapsed time in seconds
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  const [textColor, setTextColor] = useState('#000000'); // Default to black
+  const [currentLayer, setCurrentLayer] = useState<'maroon' | 'lightGray'>('maroon'); // Track which layer is active
   
   // Grace period modals
   const [showGracePeriodWarning, setShowGracePeriodWarning] = useState(false);
@@ -288,6 +290,7 @@ const ActiveParkingScreen: React.FC = () => {
   // Real parking start time from booking data
   const parkingStartTime = useRef<number | null>(null);
   const totalParkingTime = 60 * 60; // 1 hour total parking time in seconds
+  const layerDuration = 30; // Each layer (maroon/light gray) completes in 30 seconds for visible animation
 
   const resetBookingState = useCallback(() => {
     setBookingData(null);
@@ -2793,16 +2796,35 @@ const ActiveParkingScreen: React.FC = () => {
   // Simple local timer - ONLY controlled by attendant scans
   useEffect(() => {
     if (isTimerRunning && parkingStartTime.current !== null) {
+      // Initialize progress instantly when screen opens
+      const currentElapsed = Math.floor((Date.now() - parkingStartTime.current!) / 1000);
+      const layerProgress = Math.min(currentElapsed / layerDuration, 1);
+      
+      // Calculate which layer should be active and progress within that layer
+      const totalCycles = Math.floor(currentElapsed / layerDuration);
+      const currentLayerProgress = (currentElapsed % layerDuration) / layerDuration;
+      
+      // Determine active layer (alternates between maroon and light gray)
+      const activeLayer = totalCycles % 2 === 0 ? 'maroon' : 'lightGray';
+      setCurrentLayer(activeLayer);
+      
+      progressAnim.setValue(currentLayerProgress); // Set progress within current layer
+      
       const interval = setInterval(() => {
         const now = Date.now();
         const elapsed = Math.floor((now - parkingStartTime.current!) / 1000);
         setElapsedTime(elapsed);
         
-        // Update progress animation
-        const progress = Math.min(elapsed / totalParkingTime, 1);
+        // Update progress animation every second
+        const cycles = Math.floor(elapsed / layerDuration);
+        const currentLayerProgress = (elapsed % layerDuration) / layerDuration;
+        const newActiveLayer = cycles % 2 === 0 ? 'maroon' : 'lightGray';
+        
+        setCurrentLayer(newActiveLayer);
+        
         Animated.timing(progressAnim, {
-          toValue: progress,
-          duration: 1000,
+          toValue: currentLayerProgress,
+          duration: 200, // Smooth transition over 200ms
           useNativeDriver: false,
         }).start();
       }, 1000);
@@ -2819,7 +2841,7 @@ const ActiveParkingScreen: React.FC = () => {
         clearInterval(intervalRef.current);
       }
     }
-  }, [isTimerRunning, parkingStartTime.current, totalParkingTime, progressAnim]);
+  }, [isTimerRunning, parkingStartTime.current, layerDuration, progressAnim]);
 
   // Refresh data when screen comes into focus
   useFocusEffect(
@@ -4207,34 +4229,44 @@ const ActiveParkingScreen: React.FC = () => {
         {activeTab === 'time' && (
               <View style={activeParkingScreenStyles.timeContainer}>
                 {/* ... (rest of the code remains the same) */}
-            {/* Circular Timer */}
+            {/* Timer Display with Circular Progress */}
             <View style={activeParkingScreenStyles.timerSection}>
               <View style={activeParkingScreenStyles.timerContainer}>
                 <View style={activeParkingScreenStyles.timerCircle}>
-                  <Animated.View 
-                    style={[
-                      activeParkingScreenStyles.timerProgress,
-                      {
-                        transform: [{
-                          rotate: progressAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: ['-90deg', '270deg'], // Start from top, go clockwise
-                          })
-                        }]
-                      }
-                    ]} 
-                  />
+                  {/* Background Circle */}
+                  <View style={[activeParkingScreenStyles.timerBackgroundCircle]} />
+                  
+                  {/* Progress Circle using SVG */}
+                  <View style={activeParkingScreenStyles.timerProgressContainer}>
+                    <View style={activeParkingScreenStyles.timerProgressSvg}>
+                      {/* Progress fill that grows from bottom */}
+                      <Animated.View
+                        style={[
+                          activeParkingScreenStyles.timerProgressFill,
+                          {
+                            height: progressAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: ['0%', '100%'], // Fill from 0% to 100%
+                            }),
+                            backgroundColor: currentLayer === 'maroon' ? colors.primary : '#D3D3D3', // Maroon or light gray
+                          }
+                        ]}
+                      />
+                    </View>
+                  </View>
+                  
+                  {/* Timer Content */}
                   <View style={activeParkingScreenStyles.timerContent}>
-                    <Text style={activeParkingScreenStyles.timerText}>
+                    <Text style={[activeParkingScreenStyles.timerText, { color: textColor }]}>
                       {parkingEndTime ? 
                         formatTime(Math.floor((parkingEndTime - (parkingStartTime.current || 0)) / 1000)) : 
                         formatTime(elapsedTime)
                       }
                     </Text>
                     <View style={activeParkingScreenStyles.timerLabels}>
-                      <Text style={activeParkingScreenStyles.timerLabel}>hour</Text>
-                      <Text style={activeParkingScreenStyles.timerLabel}>min</Text>
-                      <Text style={activeParkingScreenStyles.timerLabel}>sec</Text>
+                      <Text style={[activeParkingScreenStyles.timerLabel, { color: textColor }]}>hour</Text>
+                      <Text style={[activeParkingScreenStyles.timerLabel, { color: textColor }]}>min</Text>
+                      <Text style={[activeParkingScreenStyles.timerLabel, { color: textColor }]}>sec</Text>
                     </View>
                   </View>
                 </View>

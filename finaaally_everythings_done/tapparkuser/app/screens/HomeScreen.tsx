@@ -31,6 +31,7 @@ import { useLoading } from '../../contexts/LoadingContext';
 import { useThemeColors, useTheme } from '../../contexts/ThemeContext';
 import ApiService from '../../services/api';
 import TermsModal from '../../components/TermsModal';
+import StepFlowIndicator from '../components/StepFlowIndicator';
 import { 
   lineGraphIconSvg, 
   profitIconSvg, 
@@ -234,6 +235,40 @@ export default function HomeScreen() {
   const [svgAspectRatio, setSvgAspectRatio] = useState<number>(3.5); // Fixed standard aspect ratio for all layouts (wide landscape)
   const [showExpirationModal, setShowExpirationModal] = useState(false);
   const [expirationDetails, setExpirationDetails] = useState<any>(null);
+  
+  // Booking flow step tracking
+  const [currentBookingStep, setCurrentBookingStep] = useState(0);
+  const bookingSteps = ['Select Vehicle', 'Choose Area', 'Book Slot'];
+
+  // Group parking areas by location
+  const groupParkingAreasByLocation = (areas: any[]) => {
+    const grouped: { [key: string]: any[] } = {
+      'FPA': [],
+      'Main Campus': []
+    };
+    
+    areas.forEach(area => {
+      // Check if area name contains FPA or Main Campus indicators
+      const areaName = (area.name || '').toLowerCase();
+      const areaLocation = (area.location || area.address || area.location_name || '').toLowerCase();
+      
+      if (areaName.includes('fpa') || areaLocation.includes('fpa')) {
+        grouped['FPA'].push(area);
+      } else {
+        // Default to Main Campus for all other areas
+        grouped['Main Campus'].push(area);
+      }
+    });
+    
+    // Remove empty sections
+    Object.keys(grouped).forEach(key => {
+      if (grouped[key].length === 0) {
+        delete grouped[key];
+      }
+    });
+    
+    return grouped;
+  };
   const svgDimensions = useMemo(() => {
     let svgWidth: number;
     let svgHeight: number;
@@ -569,6 +604,7 @@ export default function HomeScreen() {
   // Handle vehicle card press - show parking areas
   const handleVehicleCardPress = (vehicle: any) => {
     setSelectedVehicleForParking(vehicle);
+    setCurrentBookingStep(1); // Set to step 1 (Choose Area)
     fetchParkingAreas();
     setIsModalVisible(true);
   };
@@ -621,6 +657,7 @@ export default function HomeScreen() {
         const assignedSpot = response.data.spots[0];
         setAssignedSlot(assignedSpot.spot_number);
         setAssignedSpotDetails(assignedSpot);
+        setCurrentBookingStep(2); // Set to step 2 (Book Slot)
         setIsBookingModalVisible(true);
       } else {
         const vehicleTypeName = vehicleType ? `${vehicleType} ` : '';
@@ -736,6 +773,7 @@ export default function HomeScreen() {
 
   const handleCloseModal = () => {
     setIsModalVisible(false);
+    setCurrentBookingStep(0); // Reset to step 0
   };
 
   const handleSelectParkingArea = (area: string) => {
@@ -762,6 +800,7 @@ export default function HomeScreen() {
     setSelectedVehicleForParking(null);
     setSelectedParkingArea(null);
     setAssignedSpotDetails(null);
+    setCurrentBookingStep(0); // Reset to step 0
   };
 
   const handleBookNow = async () => {
@@ -1030,6 +1069,7 @@ export default function HomeScreen() {
   const handleCloseVehicleSelectionModal = () => {
     setIsVehicleSelectionModalVisible(false);
     setSelectedVehicle('');
+    setCurrentBookingStep(0); // Reset to step 0
     // Don't clear selectedSpotForBooking here - it might be needed for retry
     // Only clear it after successful booking or when explicitly needed
   };
@@ -3549,6 +3589,14 @@ export default function HomeScreen() {
         <View style={homeScreenStyles.modalOverlay}>
           <View style={homeScreenStyles.modalContainer}>
             <Text style={homeScreenStyles.modalTitle}>Book a Parking Slot</Text>
+            
+            {/* Step Flow Indicator */}
+            <StepFlowIndicator 
+              currentStep={currentBookingStep}
+              totalSteps={3}
+              stepLabels={bookingSteps}
+            />
+            
             <Text style={homeScreenStyles.modalSubtitle}>Choose a parking area:</Text>
             
             {isLoadingParkingAreas ? (
@@ -3557,23 +3605,33 @@ export default function HomeScreen() {
                 <Text style={homeScreenStyles.loadingText}>Loading parking areas...</Text>
               </View>
             ) : (
-              <View style={homeScreenStyles.parkingAreaButtons}>
-                {(parkingAreas || []).map((area) => {
-                  console.log('📍 Parking Area Data:', JSON.stringify(area, null, 2));
-                  return (
-                  <TouchableOpacity 
-                    key={area.id}
-                      style={homeScreenStyles.parkingAreaButton}
-                    onPress={() => handleParkingAreaSelect(area)}
-                  >
-                      <Text style={homeScreenStyles.parkingAreaButtonText}>{area.name}</Text>
-                      <Text style={homeScreenStyles.parkingAreaLocation}>
-                        {area.location || area.address || area.location_name || 'Location not available'}
-                      </Text>
-                  </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <ScrollView style={{ maxHeight: 400 }}>
+                {Object.entries(groupParkingAreasByLocation(parkingAreas || [])).map(([locationPrefix, areas]) => (
+                  <View key={locationPrefix} style={homeScreenStyles.parkingAreaSection}>
+                    <Text style={homeScreenStyles.parkingAreaSectionTitle}>
+                      {locationPrefix.toUpperCase()}
+                    </Text>
+                    <View style={homeScreenStyles.parkingAreaButtons}>
+                      {areas.map((area) => (
+                        <TouchableOpacity 
+                          key={area.id}
+                          style={homeScreenStyles.parkingAreaButton}
+                          onPress={() => handleParkingAreaSelect(area)}
+                        >
+                          <Text style={homeScreenStyles.parkingAreaButtonText}>{area.name}</Text>
+                          <Text style={homeScreenStyles.parkingAreaLocation}>
+                            {area.location || area.address || area.location_name || 'Location not available'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {Object.keys(groupParkingAreasByLocation(parkingAreas || [])).indexOf(locationPrefix) < 
+                     Object.keys(groupParkingAreasByLocation(parkingAreas || [])).length - 1 && (
+                      <View style={homeScreenStyles.parkingAreaSectionDivider} />
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
             )}
             
             <TouchableOpacity style={homeScreenStyles.closeButton} onPress={handleCloseModal}>
@@ -3593,6 +3651,14 @@ export default function HomeScreen() {
         <View style={homeScreenStyles.modalOverlay}>
           <View style={homeScreenStyles.bookingModalContainer}>
             <Text style={homeScreenStyles.bookingModalTitle}>Book a Parking Slot</Text>
+            
+            {/* Step Flow Indicator */}
+            <StepFlowIndicator 
+              currentStep={2}
+              totalSteps={3}
+              stepLabels={bookingSteps}
+            />
+            
             <Text style={homeScreenStyles.bookingModalText}>
               An available slot has been automatically assigned for you at {selectedParkingArea?.name}:
             </Text>
@@ -3636,6 +3702,13 @@ export default function HomeScreen() {
                 <Ionicons name="close" size={24} color={colors.primary} />
               </TouchableOpacity>
             </View>
+            
+            {/* Step Flow Indicator */}
+            <StepFlowIndicator 
+              currentStep={0}
+              totalSteps={3}
+              stepLabels={bookingSteps}
+            />
             
             <View style={homeScreenStyles.vehicleTypeInfoContainer}>
               <Text style={homeScreenStyles.vehicleTypeInfoText}>
