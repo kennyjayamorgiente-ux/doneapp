@@ -125,6 +125,32 @@ export const getActiveParkingScreenStyles = (colors: ThemeColors) => StyleSheet.
     marginBottom: getResponsiveMargin(15),
     textAlign: 'left',
   },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: getResponsiveMargin(15),
+  },
+  durationText: {
+    fontSize: getResponsiveFontSize(16),
+    fontWeight: '600',
+    color: colors.textSecondary,
+    backgroundColor: colors.card,
+    paddingHorizontal: getResponsivePadding(12),
+    paddingVertical: getResponsivePadding(6),
+    borderRadius: getResponsiveSize(6),
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  balanceContainer: {
+    alignItems: 'flex-end',
+    padding: getResponsivePadding(4),
+  },
+  balanceValue: {
+    fontSize: getResponsiveFontSize(12),
+    fontWeight: 'bold',
+    color: colors.textInverse,
+  },
   tabsContainer: {
     flexDirection: 'row',
     backgroundColor: colors.card,

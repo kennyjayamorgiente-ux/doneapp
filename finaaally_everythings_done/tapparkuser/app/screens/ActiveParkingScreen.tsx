@@ -129,7 +129,8 @@ const ActiveParkingScreen: React.FC = () => {
   const { hideLoading } = useLoading(); // Add this to force hide loading
   const activeParkingScreenStyles = getActiveParkingScreenStyles(colors);
   const screenDimensions = useScreenDimensions();
-  const [activeTab, setActiveTab] = useState('ticket');
+  const [activeTab, setActiveTab] = useState('ticket'); // Default to Parking Ticket tab
+  console.log('🎯 ActiveParkingScreen: activeTab state changed to:', activeTab);
   
   // Booking data state
   const [bookingData, setBookingData] = useState<any>(null);
@@ -230,6 +231,8 @@ const ActiveParkingScreen: React.FC = () => {
   const lastLoadedLayoutAreaIdRef = useRef<number | null>(null);
   const isLayoutLoadingRef = useRef(false);
   const previousUserIdRef = useRef<number | string | null>(null);
+  const isTimerRunningRef = useRef(false);
+  const isInitialMountRef = useRef(true);
 
   useEffect(() => {
     if (!bookingData?.reservationId) {
@@ -237,6 +240,14 @@ const ActiveParkingScreen: React.FC = () => {
       setLastExpiredReservationId(null);
     }
   }, [bookingData?.reservationId]);
+
+  // Set initial mount flag to false after first render
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      isInitialMountRef.current = false;
+    }, 100); // Small delay to ensure initial data is loaded
+    return () => clearTimeout(timer);
+  }, []);
 
   const enhancedClickableSpots = useMemo(() => 
     clickableSpots.map(spot => ({
@@ -274,7 +285,13 @@ const ActiveParkingScreen: React.FC = () => {
   const [showTestModal, setShowTestModal] = useState(false);
   const [showParkingEndModal, setShowParkingEndModal] = useState(false);
   const [parkingEndDetails, setParkingEndDetails] = useState<any>(null);
-  const [isTimerRunning, setIsTimerRunning] = useState(false); // Start as false, will start when attendant scans
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [userBalance, setUserBalance] = useState<number>(0);
+  
+  // Update ref whenever isTimerRunning changes
+  useEffect(() => {
+    isTimerRunningRef.current = isTimerRunning;
+  }, [isTimerRunning]); // Start as false, will start when attendant scans
   const [elapsedTime, setElapsedTime] = useState(0); // Track elapsed time in seconds
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -325,7 +342,15 @@ const ActiveParkingScreen: React.FC = () => {
     previousUserIdRef.current = currentUserId;
   }, [bookingData, isAuthenticated, resetBookingState, user?.user_id]);
 
-  // Format duration helper
+  // Helper function to format decimal hours to HH.MM format (e.g., 83.5 -> "83.30")
+const formatHoursToHHMM = (decimalHours: number): string => {
+  if (!decimalHours || decimalHours === 0) return '0.00';
+  const hours = Math.floor(decimalHours);
+  const minutes = Math.round((decimalHours - hours) * 60);
+  return `${hours}.${minutes.toString().padStart(2, '0')}`;
+};
+
+// Format duration helper
   const formatDuration = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -333,6 +358,35 @@ const ActiveParkingScreen: React.FC = () => {
       return `${hours}h ${mins}m`;
     }
     return `${mins}m`;
+  };
+
+  // Format elapsed time to display format
+  const formatElapsedTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
+  // Fetch user balance
+  const fetchUserBalance = async () => {
+    try {
+      const balanceResponse = await ApiService.getSubscriptionBalance();
+      if (balanceResponse.success) {
+        const balance = balanceResponse.data.total_hours_remaining || 0;
+        setUserBalance(balance);
+        console.log('🎯 ActiveParkingScreen: Balance fetched:', balance, 'hours');
+      }
+    } catch (error) {
+      console.error('🎯 ActiveParkingScreen: Error fetching user balance:', error);
+    }
   };
 
   // Grace period helper functions
@@ -385,16 +439,39 @@ const ActiveParkingScreen: React.FC = () => {
   };
 
   const handleParkingEndModalClose = () => {
+    console.log('🎯 Parking End Modal: OK button pressed, closing modal and navigating to home');
+    
+    // Force close all modals immediately
     setShowParkingEndModal(false);
+    setShowSpotModal(false);
+    setShowTestModal(false);
+    setShowGracePeriodWarning(false);
     setParkingEndDetails(null);
+    
     // Clear all parking data
     setBookingData(null);
     setElapsedTime(0);
     setParkingEndTime(null);
     setQrScanned(false);
     parkingStartTime.current = null;
-    // Navigate back to home
-    router.replace('/screens/HomeScreen');
+    setIsTimerRunning(false);
+    
+    console.log('🎯 Parking End Modal: Navigating to HomeScreen...');
+    
+    // Navigate immediately
+    try {
+      router.replace('/screens/HomeScreen');
+    } catch (error) {
+      console.error('🎯 Parking End Modal: Navigation error:', error);
+      // Fallback navigation
+      router.push('/screens/HomeScreen');
+    }
+    
+    // Force navigation after a short delay as fallback
+    setTimeout(() => {
+      console.log('🎯 Parking End Modal: Fallback navigation triggered');
+      router.replace('/screens/HomeScreen');
+    }, 100);
   };
 
 
@@ -2752,12 +2829,29 @@ const ActiveParkingScreen: React.FC = () => {
             if (response.data.bookingStatus === 'active' && response.data.timestamps?.startTime) {
               const startTime = new Date(response.data.timestamps.startTime).getTime();
               parkingStartTime.current = startTime;
+              
+              // Check if timer was already running before updating state
+              const wasTimerRunning = isTimerRunningRef.current;
+              
               setIsTimerRunning(true);
               const calculatedElapsed = Math.floor((Date.now() - startTime) / 1000);
               setElapsedTime(calculatedElapsed);
               setQrScanned(true);
-              setActiveTab('time'); // Automatically switch to Parking Time tab when QR is scanned
-              console.log('🎯 ActiveParkingScreen: Booking is active, timer started, switched to time tab');
+              
+              // Fetch balance when active session is detected
+              fetchUserBalance();
+              
+              // Only switch to time tab if timer wasn't running before (first time starting) AND this is not initial mount
+              if (!wasTimerRunning && !isInitialMountRef.current) {
+                console.log('🎯 ActiveParkingScreen: fetchBookingData - Switching to TIME tab (timer was not running)');
+                setActiveTab('time'); // Go to Parking Time when attendant starts session
+              } else if (wasTimerRunning && !isInitialMountRef.current) {
+                console.log('🎯 ActiveParkingScreen: fetchBookingData - User returned to active session, staying on TICKET tab');
+                setActiveTab('ticket'); // Stay on Parking Ticket when user returns to active session
+              } else {
+                console.log('🎯 ActiveParkingScreen: fetchBookingData - NOT switching to time tab (timer already running or initial mount)');
+              }
+              console.log('🎯 ActiveParkingScreen: Booking is active, timer started');
             } else if (response.data.bookingStatus === 'reserved') {
               // Booking is reserved but not active yet
               setIsTimerRunning(false);
@@ -2779,7 +2873,7 @@ const ActiveParkingScreen: React.FC = () => {
         } else {
           console.log('🎯 ActiveParkingScreen: No reservation ID found');
           setBookingData(null);
-          setBookingError('No active booking found. Please book a parking spot first.');
+          setBookingError(null); // Don't show error for no active booking - this is normal state
         }
       } catch (error) {
         console.error('🎯 ActiveParkingScreen: Error fetching booking data:', error);
@@ -2884,11 +2978,28 @@ const ActiveParkingScreen: React.FC = () => {
               if (response.data.bookingStatus === 'active' && response.data.timestamps?.startTime) {
                 const startTime = new Date(response.data.timestamps.startTime).getTime();
                 parkingStartTime.current = startTime;
+                
+                // Check if timer was already running before updating state
+                const wasTimerRunning = isTimerRunningRef.current;
+                
                 setIsTimerRunning(true);
                 const calculatedElapsed = Math.floor((Date.now() - startTime) / 1000);
                 setElapsedTime(calculatedElapsed);
                 setQrScanned(true);
-                setActiveTab('time'); // Automatically switch to Parking Time tab when QR is scanned
+                
+                // Fetch balance when active session is detected
+                fetchUserBalance();
+                
+                // Only switch to time tab if timer wasn't running before (first time starting) AND this is not initial mount
+                if (!wasTimerRunning && !isInitialMountRef.current) {
+                  console.log('🎯 ActiveParkingScreen: useFocusEffect - Switching to TIME tab (timer was not running)');
+                  setActiveTab('time'); // Go to Parking Time when attendant starts session
+                } else if (wasTimerRunning && !isInitialMountRef.current) {
+                  console.log('🎯 ActiveParkingScreen: useFocusEffect - User returned to active session, staying on TICKET tab');
+                  setActiveTab('ticket'); // Stay on Parking Ticket when user returns to active session
+                } else {
+                  console.log('🎯 ActiveParkingScreen: useFocusEffect - NOT switching to time tab (timer already running or initial mount)');
+                }
               } else if (response.data.bookingStatus === 'reserved') {
                 // Booking is reserved but not active yet
                 setIsTimerRunning(false);
@@ -3010,23 +3121,37 @@ const ActiveParkingScreen: React.FC = () => {
         // Keep local state in sync for non-expired records
         setBookingData(latestBookingData as any);
 
-        // If attendant started the session and our timer isn't running
-        if (latestBookingData.bookingStatus === 'active' && !isTimerRunning && latestBookingData.timestamps?.startTime) {
+        // If attendant started session and our timer isn't running
+        if (latestBookingData.bookingStatus === 'active' && !isTimerRunningRef.current && latestBookingData.timestamps?.startTime) {
           console.log('🟢 Attendant started session - syncing timer');
           const currentTime = Date.now();
           parkingStartTime.current = currentTime;
           setIsTimerRunning(true);
           setElapsedTime(0);
           setQrScanned(true);
-          setActiveTab('time');
+          setActiveTab('time'); // Go to Parking Time when attendant starts session
+          // Fetch user balance when session starts
+          fetchUserBalance();
           console.log(`⏱️ Timer started from 0 at ${new Date(currentTime).toISOString()}, switched to time tab`);
+        } else {
+          console.log('🔍 Polling debug - bookingStatus:', latestBookingData.bookingStatus, 'isTimerRunningRef.current:', isTimerRunningRef.current, 'hasStartTime:', !!latestBookingData.timestamps?.startTime);
         }
+        // If session is already active and timer is running, don't switch tabs - let user stay on their preferred tab
+        // If session is already active and timer is running, don't switch tabs - let user stay on their preferred tab
+        // This allows user to navigate away and come back to their last selected tab
 
         // If attendant ended the session and our timer is still running
         if (latestBookingData.bookingStatus === 'completed' && isTimerRunning) {
-          console.log('🔴 Attendant ended session - stopping timer');
+          console.log('🔴 Attendant ended session - stopping timer and polling');
           setIsTimerRunning(false);
           setParkingEndTime(Date.now());
+          
+          // Stop polling to prevent multiple modal triggers
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+          }
+          
           try {
             const endDetailsResponse = await ApiService.getBookingDetails(latestBookingData.reservationId);
             if (endDetailsResponse.success) {
@@ -3341,15 +3466,31 @@ const ActiveParkingScreen: React.FC = () => {
     <View style={activeParkingScreenStyles.container}>
       <SharedHeader 
         title="Active Parking"
+        rightComponent={
+          isTimerRunning && bookingData?.bookingStatus === 'active' ? (
+            <View style={activeParkingScreenStyles.balanceContainer}>
+              <Text style={activeParkingScreenStyles.balanceValue}>
+                {formatHoursToHHMM(userBalance)} hrs
+              </Text>
+            </View>
+          ) : null
+        }
       />
 
       <View style={activeParkingScreenStyles.content}>
         {/* Section Title */}
-        <Text style={activeParkingScreenStyles.sectionTitle}>
-          {activeTab === 'ticket' ? 'Parking Ticket' : 
-           activeTab === 'layout' ? 'Parking Layout' : 
-           'Parking Time'}
-        </Text>
+        <View style={activeParkingScreenStyles.sectionTitleContainer}>
+          <Text style={activeParkingScreenStyles.sectionTitle}>
+            {activeTab === 'ticket' ? 'Parking Ticket' : 
+             activeTab === 'layout' ? 'Parking Layout' : 
+             'Parking Time'}
+          </Text>
+          {activeTab === 'ticket' && isTimerRunning && bookingData?.bookingStatus === 'active' && (
+            <Text style={activeParkingScreenStyles.durationText}>
+              {formatElapsedTime(elapsedTime)}
+            </Text>
+          )}
+        </View>
 
         {/* Navigation Tabs */}
         <View style={activeParkingScreenStyles.tabsContainer}>

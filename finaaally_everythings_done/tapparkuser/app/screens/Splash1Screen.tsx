@@ -174,10 +174,10 @@ export default function Splash1Screen() {
       ]).start();
     }, 1500);
 
-    // Navigate to greetings screen after 3 seconds
+    // Navigate to login screen after 3 seconds
     const timer = setTimeout(() => {
-      console.log('Navigating to greetings screen...');
-      router.replace('/screens/GreetingsScreen');
+      console.log('Navigating to login screen...');
+      router.replace('/screens/LoginScreen');
     }, 3000);
 
     return () => clearTimeout(timer);

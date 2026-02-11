@@ -185,28 +185,10 @@ export const loginStyles = StyleSheet.create({
     marginTop: getResponsiveMargin(10),
   },
   buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     width: '100%',
-    gap: getResponsiveSize(16),
-    maxWidth: isTablet || isLargeTablet ? getResponsiveSize(400) : '100%',
-  },
-  goBackButton: {
-    flex: 1,
-    backgroundColor: '#E5E7EB',
-    borderRadius: getResponsiveSize(8),
-    paddingVertical: getResponsivePadding(16),
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: getResponsiveSize(48),
-  },
-  goBackButtonText: {
-    fontSize: getResponsiveFontSize(18),
-    fontWeight: '600',
-    color: '#374151',
+    marginBottom: getResponsiveMargin(16),
   },
   loginButton: {
-    flex: 1,
     backgroundColor: '#800000',
     borderRadius: getResponsiveSize(8),
     paddingVertical: getResponsivePadding(18),
@@ -226,6 +208,24 @@ export const loginStyles = StyleSheet.create({
     marginLeft: getResponsiveMargin(4),
     marginBottom: getResponsiveMargin(8),
     fontWeight: '500',
+  },
+  registerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: getResponsiveMargin(20),
+    paddingHorizontal: getResponsivePadding(20),
+  },
+  registerText: {
+    fontSize: getResponsiveFontSize(14),
+    color: '#6B7280',
+    marginRight: getResponsiveMargin(8),
+  },
+  registerLink: {
+    fontSize: getResponsiveFontSize(14),
+    color: '#800000',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });
 

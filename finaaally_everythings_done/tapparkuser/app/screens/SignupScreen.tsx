@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import { SvgXml } from 'react-native-svg';
 import { carIconSvg } from '../assets/icons/index2';
 import { signupStyles } from '../styles/signupStyles';
+import { useAuth } from '../../contexts/AuthContext';
 import ApiService from '../../services/api';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -64,6 +65,7 @@ const circleGlowSvg = `<svg width="280" height="288" viewBox="0 0 280 288" fill=
 
 export default function SignupScreen() {
   const router = useRouter();
+  const { login } = useAuth();
   const pulseAnim = new Animated.Value(1);
   const scrollViewRef = React.useRef<ScrollView>(null);
 
@@ -151,6 +153,9 @@ export default function SignupScreen() {
       });
       
       if (response.success) {
+        // Authenticate user with AuthContext after successful registration
+        await login(email.trim(), password);
+        
         Alert.alert(
           'Success!', 
           `Welcome to Tapparkuser, ${response.data.user.firstName}!`,

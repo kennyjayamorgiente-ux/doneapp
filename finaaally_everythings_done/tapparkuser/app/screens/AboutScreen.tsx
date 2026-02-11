@@ -11,14 +11,18 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SvgXml } from 'react-native-svg';
 import { tapParkLogoSvg } from '../assets/icons/index2';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function AboutScreen() {
+  const { user, isAuthenticated } = useAuth();
 
   const handleNext = () => {
-    // Navigate to login screen
-    router.push('/screens/LoginScreen');
+    // Navigate to home screen after signup/about
+    // User should already be authenticated from signup flow
+    console.log('🎯 AboutScreen: Navigating to HomeScreen, user authenticated:', isAuthenticated);
+    router.replace('/screens/HomeScreen');
   };
 
   return (

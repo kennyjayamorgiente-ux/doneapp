@@ -107,13 +107,6 @@ export default function LoginScreen() {
   }, []);
 
 
-  const handleGoBack = () => {
-    // Navigate back to greetings screen
-    router.replace('/screens/GreetingsScreen');
-  };
-
-
-
   const handleLogin = async () => {
     // Clear previous errors
     setEmailError('');
@@ -156,7 +149,7 @@ export default function LoginScreen() {
         // Navigate based on user type (terms will be checked on HomeScreen)
         Alert.alert(
           'Success!',
-          `Welcome back! Type: ${result.user.account_type_name}`,
+          `Welcome back! ${result.user.account_type_name}`,
           [
             {
               text: 'OK',
@@ -316,13 +309,6 @@ export default function LoginScreen() {
           <View style={styles.bottomSection}>
             <View style={styles.buttonContainer}>
               <TouchableOpacity
-                onPress={handleGoBack}
-                style={styles.goBackButton}
-              >
-                <Text style={styles.goBackButtonText}>Go Back</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
                 onPress={handleLogin}
                 style={[styles.loginButton, isLoggingIn && { opacity: 0.7 }]}
                 disabled={isLoggingIn}
@@ -332,6 +318,14 @@ export default function LoginScreen() {
                 ) : (
                   <Text style={styles.loginButtonText}>Login</Text>
                 )}
+              </TouchableOpacity>
+            </View>
+            
+            {/* Register Link */}
+            <View style={styles.registerContainer}>
+              <Text style={styles.registerText}>Don't have an account?</Text>
+              <TouchableOpacity onPress={() => router.push('/screens/SignupScreen')}>
+                <Text style={styles.registerLink}>Register</Text>
               </TouchableOpacity>
             </View>
           </View>

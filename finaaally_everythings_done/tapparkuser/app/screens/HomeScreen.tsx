@@ -103,6 +103,9 @@ export default function HomeScreen() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [isAcceptingTerms, setIsAcceptingTerms] = useState(false);
   const [hasCheckedTerms, setHasCheckedTerms] = useState(false);
+  
+  // State for user balance
+  const [userBalance, setUserBalance] = useState<number>(0);
 
   // Set Android navigation bar to black
   useEffect(() => {
@@ -151,6 +154,35 @@ export default function HomeScreen() {
       setIsAcceptingTerms(false);
     }
   };
+
+  // Helper function to format decimal hours to HH.MM format (e.g., 83.5 -> "83.30")
+  const formatHoursToHHMM = (decimalHours: number): string => {
+    if (!decimalHours || decimalHours === 0) return '0.00';
+    const hours = Math.floor(decimalHours);
+    const minutes = Math.round((decimalHours - hours) * 60);
+    return `${hours}.${minutes.toString().padStart(2, '0')}`;
+  };
+
+  // Fetch user balance
+  const fetchUserBalance = async () => {
+    try {
+      const balanceResponse = await ApiService.getSubscriptionBalance();
+      if (balanceResponse.success) {
+        const balance = balanceResponse.data.total_hours_remaining || 0;
+        setUserBalance(balance);
+        console.log('🎯 HomeScreen: Balance fetched:', balance, 'hours');
+      }
+    } catch (error) {
+      console.error('🎯 HomeScreen: Error fetching user balance:', error);
+    }
+  };
+
+  // Fetch balance when component mounts and user is authenticated
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      fetchUserBalance();
+    }
+  }, [isAuthenticated, user]);
 
   // Profile picture component
   const ProfilePicture = ({ size = 32 }: { size?: number }) => {
@@ -3257,15 +3289,29 @@ export default function HomeScreen() {
 
 
 
-  // Header Profile Picture component
-  const HeaderProfilePicture = () => (
-    <TouchableOpacity onPress={() => {
-      showLoading();
-      router.push('/ProfileScreen');
-      setTimeout(() => hideLoading(), 300);
+  // Header Balance component
+  const HeaderBalance = () => (
+    <View style={{
+      alignItems: 'flex-end',
+      padding: 4,
     }}>
-      <ProfilePicture size={32} />
-    </TouchableOpacity>
+      <View style={{
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.3)',
+      }}>
+        <Text style={{
+          fontSize: 12,
+          fontWeight: 'bold',
+          color: colors.textInverse,
+        }}>
+          Balance: {formatHoursToHHMM(userBalance)} hrs
+        </Text>
+      </View>
+    </View>
   );
 
   return (
@@ -3273,7 +3319,7 @@ export default function HomeScreen() {
       <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} backgroundColor={colors.background} translucent={true} />
       <SharedHeader 
         title="TapPark" 
-        rightComponent={<HeaderProfilePicture />}
+        rightComponent={<HeaderBalance />}
       />
 
       {/* ScrollView Container - targeted for loading overlay */}
