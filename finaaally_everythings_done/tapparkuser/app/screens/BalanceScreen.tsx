@@ -384,7 +384,7 @@ const BalanceScreen: React.FC = () => {
                   height={getResponsiveSize(32)}
                 />
                 <Text style={balanceScreenStyles.balanceText}>
-                  {subscriptionBalance ? `${subscriptionBalance.total_hours_remaining || 0} hrs` : '0 hrs'}
+                  {subscriptionBalance ? `${formatHoursToHHMM(subscriptionBalance.total_hours_remaining || 0)} hrs` : '0.00 hrs'}
                 </Text>
               </View>
               <TouchableOpacity 

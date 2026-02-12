@@ -24,6 +24,7 @@ import { getActiveParkingScreenStyles } from '../styles/activeParkingScreenStyle
 import { useThemeColors, useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLoading } from '../../contexts/LoadingContext';
+import { useExpirationModal } from '../../contexts/ExpirationModalContext';
 import ApiService from '../../services/api';
 import { useScreenDimensions, getAdaptiveSize, getAdaptiveFontSize, getAdaptivePadding, getAdaptiveSpacing } from '../../hooks/use-screen-dimensions';
 import { calculateAllSpotPositions } from '../../utils/svgSpotPositioning';
@@ -127,6 +128,7 @@ const ActiveParkingScreen: React.FC = () => {
   const { isDarkMode } = useTheme();
   const { isAuthenticated, user } = useAuth();
   const { hideLoading } = useLoading(); // Add this to force hide loading
+  const { checkPendingReservationExpiration } = useExpirationModal(); // Add expiration modal check
   const activeParkingScreenStyles = getActiveParkingScreenStyles(colors);
   const screenDimensions = useScreenDimensions();
   const [activeTab, setActiveTab] = useState('ticket'); // Default to Parking Ticket tab
@@ -2940,6 +2942,9 @@ const formatHoursToHHMM = (decimalHours: number): string => {
   // Refresh data when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
+      // Check for pending reservation expiration modal
+      checkPendingReservationExpiration();
+      
       const refreshBookingData = async () => {
         try {
           // Get reservation ID from params (passed from any booking surface)
@@ -3253,7 +3258,7 @@ const formatHoursToHHMM = (decimalHours: number): string => {
         clearInterval(pollingInterval);
       }
     };
-  }, [bookingData?.reservationId, isTimerRunning, isAuthenticated]);
+  }, [bookingData?.reservationId, isTimerRunning, isAuthenticated, checkPendingReservationExpiration]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -3468,8 +3473,19 @@ const formatHoursToHHMM = (decimalHours: number): string => {
         title="Active Parking"
         rightComponent={
           isTimerRunning && bookingData?.bookingStatus === 'active' ? (
-            <View style={activeParkingScreenStyles.balanceContainer}>
-              <Text style={activeParkingScreenStyles.balanceValue}>
+            <View style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.2)',
+              paddingHorizontal: 6,
+              paddingVertical: 3,
+              borderRadius: 4,
+              borderWidth: 1,
+              borderColor: 'rgba(255, 255, 255, 0.3)',
+            }}>
+              <Text style={{
+                fontSize: 10,
+                fontWeight: 'bold',
+                color: colors.textInverse,
+              }}>
                 {formatHoursToHHMM(userBalance)} hrs
               </Text>
             </View>
@@ -4732,7 +4748,18 @@ const formatHoursToHHMM = (decimalHours: number): string => {
                   <View style={activeParkingScreenStyles.parkingEndDetailRow}>
                     <Text style={activeParkingScreenStyles.parkingEndDetailLabel}>Hours Deducted:</Text>
                     <Text style={activeParkingScreenStyles.parkingEndDetailValue}>
-                      {formatHoursToHHMM(parkingEndDetails.chargeHours)} hr{parkingEndDetails.chargeHours >= 1 ? 's' : ''}
+                      {(() => {
+                        const hours = Math.floor(parkingEndDetails.chargeHours);
+                        const minutes = Math.round((parkingEndDetails.chargeHours - hours) * 60);
+                        
+                        if (hours === 0 && minutes > 0) {
+                          return `${minutes} min`;
+                        } else if (hours > 0 && minutes === 0) {
+                          return `${hours} hr${hours >= 1 ? 's' : ''}`;
+                        } else {
+                          return `${hours} hr${hours >= 1 ? 's' : ''} ${minutes} min`;
+                        }
+                      })()}
                     </Text>
                   </View>
                   

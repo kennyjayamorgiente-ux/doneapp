@@ -4,9 +4,11 @@ import { View } from 'react-native';
 import { DrawerProvider } from '../contexts/DrawerContext';
 import { AuthProvider } from '../contexts/AuthContext';
 import { LoadingProvider } from '../contexts/LoadingContext';
+import { ExpirationModalProvider } from '../contexts/ExpirationModalContext';
 import { ThemeProvider, useThemeColors } from '../contexts/ThemeContext';
 import CustomDrawer from '../components/CustomDrawer';
 import GlobalSpinner from '../components/GlobalSpinner';
+import ExpirationModal from '../components/ExpirationModal';
 import { useDrawer } from '../contexts/DrawerContext';
 
 function RootLayoutNav() {
@@ -88,6 +90,7 @@ function ThemedRootLayout() {
 		<View style={{ flex: 1, backgroundColor: colors.background }}>
 			<RootLayoutNav />
 			<GlobalSpinner />
+			<ExpirationModal />
 		</View>
 	);
 }
@@ -98,9 +101,11 @@ export default function RootLayout() {
 			<ThemeProvider>
 				<AuthProvider>
 					<LoadingProvider>
-						<DrawerProvider>
-							<ThemedRootLayout />
-						</DrawerProvider>
+						<ExpirationModalProvider>
+							<DrawerProvider>
+								<ThemedRootLayout />
+							</DrawerProvider>
+						</ExpirationModalProvider>
 					</LoadingProvider>
 				</AuthProvider>
 			</ThemeProvider>

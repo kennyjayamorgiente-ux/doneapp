@@ -28,6 +28,7 @@ import SharedHeader from '../../components/SharedHeader';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDrawer } from '../../contexts/DrawerContext';
 import { useLoading } from '../../contexts/LoadingContext';
+import { useExpirationModal } from '../../contexts/ExpirationModalContext';
 import { useThemeColors, useTheme } from '../../contexts/ThemeContext';
 import ApiService from '../../services/api';
 import TermsModal from '../../components/TermsModal';
@@ -42,7 +43,6 @@ import {
   whiteEbikeIconSvg
 } from '../assets/icons/index2';
 import { getHomeScreenStyles } from '../styles/homeScreenStyles';
-import { PENDING_EXPIRATION_STORAGE_KEY } from '../constants/storageKeys';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -88,8 +88,6 @@ const getResponsiveMargin = (baseMargin: number) => {
   if (isLargeTablet) return baseMargin * 1.2;
   return baseMargin;
 };
-
-const EXPIRATION_MODAL_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function HomeScreen() {
   const { user, isAuthenticated, isLoading, checkAuthStatus } = useAuth();
@@ -265,8 +263,9 @@ export default function HomeScreen() {
   const [svgContent, setSvgContent] = useState<string>('');
   const [isLoadingSvg, setIsLoadingSvg] = useState(false);
   const [svgAspectRatio, setSvgAspectRatio] = useState<number>(3.5); // Fixed standard aspect ratio for all layouts (wide landscape)
-  const [showExpirationModal, setShowExpirationModal] = useState(false);
-  const [expirationDetails, setExpirationDetails] = useState<any>(null);
+  
+  // Use global expiration modal context
+  const { checkPendingReservationExpiration } = useExpirationModal();
   
   // Booking flow step tracking
   const [currentBookingStep, setCurrentBookingStep] = useState(0);
@@ -367,37 +366,6 @@ export default function HomeScreen() {
     totalUsed?: number;
     utilizationRate?: string;
   }>>([]);
-
-  const handleExpirationModalClose = useCallback(() => {
-    setShowExpirationModal(false);
-    setExpirationDetails(null);
-  }, []);
-
-  const checkPendingReservationExpiration = useCallback(async () => {
-    if (!isAuthenticated) {
-      return;
-    }
-
-    try {
-      const stored = await AsyncStorage.getItem(PENDING_EXPIRATION_STORAGE_KEY);
-      if (!stored) {
-        return;
-      }
-
-      await AsyncStorage.removeItem(PENDING_EXPIRATION_STORAGE_KEY);
-      const parsed = JSON.parse(stored);
-
-      const timestamp = parsed?.timestamp;
-      if (!timestamp || Date.now() - timestamp > EXPIRATION_MODAL_MAX_AGE_MS) {
-        return;
-      }
-
-      setExpirationDetails(parsed);
-      setShowExpirationModal(true);
-    } catch (error) {
-      console.error('Error loading pending reservation expiration details:', error);
-    }
-  }, [isAuthenticated]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -3297,18 +3265,18 @@ export default function HomeScreen() {
     }}>
       <View style={{
         backgroundColor: 'rgba(255, 255, 255, 0.2)',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        borderRadius: 4,
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.3)',
       }}>
         <Text style={{
-          fontSize: 12,
+          fontSize: 10,
           fontWeight: 'bold',
           color: colors.textInverse,
         }}>
-          Balance: {formatHoursToHHMM(userBalance)} hrs
+          {formatHoursToHHMM(userBalance)} hrs
         </Text>
       </View>
     </View>
@@ -4768,71 +4736,6 @@ export default function HomeScreen() {
               <Text style={homeScreenStyles.closeButtonText}>Close</Text>
             </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Reservation Expiration Modal */}
-      <Modal
-        visible={showExpirationModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={handleExpirationModalClose}
-      >
-        <View style={homeScreenStyles.modalOverlay}>
-          <View style={[homeScreenStyles.modalContainer, { borderWidth: 1, borderColor: '#FF3B30', alignItems: 'stretch' }] }>
-            <View style={homeScreenStyles.expirationModalHeader}>
-              <Ionicons name="close-circle" size={32} color="#FF3B30" />
-              <Text style={homeScreenStyles.expirationModalTitle}>Reservation Expired</Text>
-            </View>
-
-            <View style={homeScreenStyles.expirationModalContent}>
-              <Text style={homeScreenStyles.expirationModalText}>
-                Your reservation for {expirationDetails?.spotNumber || 'your spot'} at {expirationDetails?.areaName || 'the selected area'} expired because check-in did not happen in time.
-              </Text>
-              <Text style={homeScreenStyles.expirationModalText}>
-                The spot has been released for other users. You can book another spot if it is still available.
-              </Text>
-
-              {expirationDetails?.billingBreakdown && (
-                <View style={homeScreenStyles.billingBreakdownContainer}>
-                  <Text style={homeScreenStyles.expirationModalTitle}>Billing Details</Text>
-                  <View style={homeScreenStyles.billingBreakdownRow}>
-                    <Text style={homeScreenStyles.billingBreakdownLabel}>Wait Time</Text>
-                    <Text style={homeScreenStyles.billingBreakdownValue}>
-                      {expirationDetails.billingBreakdown.waitTimeMinutes} min
-                    </Text>
-                  </View>
-                  <View style={homeScreenStyles.billingBreakdownRow}>
-                    <Text style={homeScreenStyles.billingBreakdownLabel}>Parking Time</Text>
-                    <Text style={homeScreenStyles.billingBreakdownValue}>
-                      {expirationDetails.billingBreakdown.parkingTimeMinutes} min
-                    </Text>
-                  </View>
-                  <View style={[homeScreenStyles.billingBreakdownRow, homeScreenStyles.billingBreakdownTotal]}>
-                    <Text style={homeScreenStyles.billingBreakdownLabel}>Total Charged</Text>
-                    <Text style={homeScreenStyles.billingBreakdownValue}>
-                      {expirationDetails.billingBreakdown.totalChargedHours.toFixed(2)} hrs
-                    </Text>
-                  </View>
-                  {expirationDetails.billingBreakdown.breakdown && (
-                    <Text style={homeScreenStyles.billingBreakdownFormula}>
-                      {expirationDetails.billingBreakdown.breakdown}
-                    </Text>
-                  )}
-                  <Text style={homeScreenStyles.billingBreakdownFormula}>
-                    ⚠️ This amount has been deducted from your account balance.
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <TouchableOpacity 
-              style={homeScreenStyles.expirationModalButton}
-              onPress={handleExpirationModalClose}
-            >
-              <Text style={homeScreenStyles.expirationModalButtonText}>OK, Got It</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>

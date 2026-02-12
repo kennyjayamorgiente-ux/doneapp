@@ -56,6 +56,25 @@ const formatHoursToHHMM = (decimalHours: number | string | null | undefined): st
   return `${wholeHours}.${minutes.toString().padStart(2, '0')}`;
 };
 
+// Helper function to format charged hours in a more readable way
+const formatChargedHours = (decimalHours: number): string => {
+  if (!decimalHours || decimalHours === 0) return '0.00 hrs';
+  
+  const hours = Math.floor(decimalHours);
+  const minutes = Math.round((decimalHours - hours) * 60);
+  
+  if (hours === 0 && minutes > 0) {
+    // Only minutes, show as minutes
+    return `${minutes} min`;
+  } else if (hours > 0 && minutes === 0) {
+    // Only hours, show as hours
+    return `${hours} hr`;
+  } else {
+    // Both hours and minutes
+    return `${hours} hr ${minutes} min`;
+  }
+};
+
 const HistoryScreen: React.FC = () => {
   const router = useRouter();
   const { user } = useAuth();
@@ -765,11 +784,28 @@ const HistoryScreen: React.FC = () => {
                       </Text>
                       {spot.hours_deducted !== null && spot.hours_deducted !== undefined ? (
                         <Text style={styles.hoursDeductedText}>
-                          Hours Deducted: {formatHoursToHHMM(spot.hours_deducted)} hr{parseFloat(String(spot.hours_deducted)) >= 1 ? 's' : ''}
+                          Hours Deducted: {(() => {
+                            const hours = Math.floor(spot.hours_deducted);
+                            const minutes = Math.round((spot.hours_deducted - hours) * 60);
+                            
+                            if (hours === 0 && minutes > 0) {
+                              return `${minutes} min`;
+                            } else if (hours > 0 && minutes === 0) {
+                              return `${hours} hr${hours >= 1 ? 's' : ''}`;
+                            } else {
+                              return `${hours} hr${hours >= 1 ? 's' : ''} ${minutes} min`;
+                            }
+                          })()}
                         </Text>
                       ) : spot.end_time ? (
                         <Text style={styles.hoursDeductedText}>
-                          Hours Deducted: 0.01 hr
+                          Hours Deducted: {(() => {
+                            // Use the same minimum charge logic as formatHoursToHHMM
+                            const minCharge = 0.01; // 1 minute minimum
+                            const hours = Math.floor(minCharge);
+                            const minutes = Math.round((minCharge - hours) * 60);
+                            return minutes > 0 ? `${minutes} min` : `${hours} hr`;
+                          })()}
                         </Text>
                       ) : null}
                     </View>
@@ -1015,11 +1051,28 @@ const HistoryScreen: React.FC = () => {
                     </Text>
                     {selectedReservation.hours_deducted !== null && selectedReservation.hours_deducted !== undefined ? (
                       <Text style={styles.reservationDetailSubValue}>
-                        Hours Deducted: {formatHoursToHHMM(selectedReservation.hours_deducted)} hr{parseFloat(String(selectedReservation.hours_deducted)) >= 1 ? 's' : ''}
+                        Hours Deducted: {(() => {
+                          const hours = Math.floor(selectedReservation.hours_deducted);
+                          const minutes = Math.round((selectedReservation.hours_deducted - hours) * 60);
+                          
+                          if (hours === 0 && minutes > 0) {
+                            return `${minutes} min`;
+                          } else if (hours > 0 && minutes === 0) {
+                            return `${hours} hr${hours >= 1 ? 's' : ''}`;
+                          } else {
+                            return `${hours} hr${hours >= 1 ? 's' : ''} ${minutes} min`;
+                          }
+                        })()}
                       </Text>
                     ) : selectedReservation.end_time ? (
                       <Text style={styles.reservationDetailSubValue}>
-                        Hours Deducted: 0.01 hr
+                        Hours Deducted: {(() => {
+                          // Use same minimum charge logic as formatHoursToHHMM
+                          const minCharge = 0.01; // 1 minute minimum
+                          const hours = Math.floor(minCharge);
+                          const minutes = Math.round((minCharge - hours) * 60);
+                          return minutes > 0 ? `${minutes} min` : `${hours} hr`;
+                        })()}
                       </Text>
                     ) : (
                       <Text style={styles.reservationDetailSubValue}>
@@ -1048,7 +1101,7 @@ const HistoryScreen: React.FC = () => {
                         <View style={[styles.billingBreakdownRow, styles.billingBreakdownTotal]}>
                           <Text style={styles.billingBreakdownLabel}>Total Charged:</Text>
                           <Text style={styles.billingBreakdownValue}>
-                            {selectedReservation.billingBreakdown.totalChargedHours.toFixed(2)} hrs
+                            {formatChargedHours(selectedReservation.billingBreakdown.totalChargedHours)}
                           </Text>
                         </View>
                         <Text style={styles.billingBreakdownFormula}>
