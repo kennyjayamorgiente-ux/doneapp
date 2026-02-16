@@ -288,17 +288,17 @@ const ActiveParkingScreen: React.FC = () => {
   const [showParkingEndModal, setShowParkingEndModal] = useState(false);
   const [parkingEndDetails, setParkingEndDetails] = useState<any>(null);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [userBalance, setUserBalance] = useState<number>(0);
+  const [userBalance, setUserBalance] = useState<number>(0); // Default 5 hours as fallback
   
   // Update ref whenever isTimerRunning changes
   useEffect(() => {
     isTimerRunningRef.current = isTimerRunning;
   }, [isTimerRunning]); // Start as false, will start when attendant scans
   const [elapsedTime, setElapsedTime] = useState(0); // Track elapsed time in seconds
+  const [remainingBalance, setRemainingBalance] = useState(0); // Track remaining balance in hours
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const [textColor, setTextColor] = useState('#000000'); // Default to black
-  const [currentLayer, setCurrentLayer] = useState<'maroon' | 'lightGray'>('maroon'); // Track which layer is active
   
   // Grace period modals
   const [showGracePeriodWarning, setShowGracePeriodWarning] = useState(false);
@@ -308,8 +308,7 @@ const ActiveParkingScreen: React.FC = () => {
   
   // Real parking start time from booking data
   const parkingStartTime = useRef<number | null>(null);
-  const totalParkingTime = 60 * 60; // 1 hour total parking time in seconds
-  const layerDuration = 30; // Each layer (maroon/light gray) completes in 30 seconds for visible animation
+  const [totalParkingTime, setTotalParkingTime] = useState(60 * 60); // Total parking time in seconds (will be updated based on user balance)
 
   const resetBookingState = useCallback(() => {
     setBookingData(null);
@@ -377,17 +376,36 @@ const formatHoursToHHMM = (decimalHours: number): string => {
     }
   };
 
-  // Fetch user balance
+  // Fetch user balance (cached)
+  const balanceFetchedRef = useRef(false);
   const fetchUserBalance = async () => {
+    // Only fetch once per session to avoid continuous API calls
+    if (balanceFetchedRef.current) {
+      console.log('🎯 ActiveParkingScreen: Balance already cached, skipping fetch');
+      return;
+    }
+    
     try {
       const balanceResponse = await ApiService.getSubscriptionBalance();
       if (balanceResponse.success) {
-        const balance = balanceResponse.data.total_hours_remaining || 0;
+        const balance = parseFloat(balanceResponse.data.total_hours_remaining) || 5.0; // Convert to number and default to 5 hours
         setUserBalance(balance);
-        console.log('🎯 ActiveParkingScreen: Balance fetched:', balance, 'hours');
+        
+        // Set total parking time based on balance (convert hours to seconds)
+        const totalSeconds = balance * 60 * 60;
+        setTotalParkingTime(totalSeconds);
+        
+        balanceFetchedRef.current = true; // Mark as cached
+        
+        console.log('🎯 ActiveParkingScreen: Balance fetched and cached:', balance, 'hours (type:', typeof balance, ')');
+        console.log('🎯 ActiveParkingScreen: Total parking time set to:', totalSeconds, 'seconds');
       }
     } catch (error) {
       console.error('🎯 ActiveParkingScreen: Error fetching user balance:', error);
+      // Set default values on error to prevent timer from breaking
+      setUserBalance(5.0);
+      setTotalParkingTime(5.0 * 60 * 60);
+      balanceFetchedRef.current = true;
     }
   };
 
@@ -2889,41 +2907,61 @@ const formatHoursToHHMM = (decimalHours: number): string => {
     fetchBookingData();
   }, [params.capacityReservationId, params.reservationId, params.sessionId]); // Removed router dependency
 
-  // Simple local timer - ONLY controlled by attendant scans
+  // Balance-based timer animation - updates every second for smooth animation
   useEffect(() => {
-    if (isTimerRunning && parkingStartTime.current !== null) {
-      // Initialize progress instantly when screen opens
+    console.log('🎯 Timer useEffect - userBalance:', userBalance, 'type:', typeof userBalance);
+    
+    if (isTimerRunning && parkingStartTime.current !== null && totalParkingTime > 0) {
+      // Additional safety check for userBalance
+      if (!userBalance || typeof userBalance !== 'number' || userBalance <= 0) {
+        console.log('🎯 Timer stopped - userBalance is invalid:', userBalance);
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+        }
+        return;
+      }
+      
+      // Initialize progress based on elapsed time
       const currentElapsed = Math.floor((Date.now() - parkingStartTime.current!) / 1000);
-      const layerProgress = Math.min(currentElapsed / layerDuration, 1);
+      setElapsedTime(currentElapsed);
       
-      // Calculate which layer should be active and progress within that layer
-      const totalCycles = Math.floor(currentElapsed / layerDuration);
-      const currentLayerProgress = (currentElapsed % layerDuration) / layerDuration;
+      // Calculate remaining time (in seconds) and balance (in hours)
+      const remainingTime = Math.max(0, totalParkingTime - currentElapsed);
+      const remainingHours = remainingTime / 3600; // Convert seconds to hours
+      setRemainingBalance(remainingHours);
       
-      // Determine active layer (alternates between maroon and light gray)
-      const activeLayer = totalCycles % 2 === 0 ? 'maroon' : 'lightGray';
-      setCurrentLayer(activeLayer);
+      // Calculate progress (1.0 = full, 0.0 = empty) based on remaining balance
+      const progress = remainingHours / userBalance; // Use original userBalance as reference
+      progressAnim.setValue(progress);
       
-      progressAnim.setValue(currentLayerProgress); // Set progress within current layer
-      
+      // Update animation every second for smooth visual feedback
       const interval = setInterval(() => {
         const now = Date.now();
         const elapsed = Math.floor((now - parkingStartTime.current!) / 1000);
         setElapsedTime(elapsed);
         
-        // Update progress animation every second
-        const cycles = Math.floor(elapsed / layerDuration);
-        const currentLayerProgress = (elapsed % layerDuration) / layerDuration;
-        const newActiveLayer = cycles % 2 === 0 ? 'maroon' : 'lightGray';
+        // Calculate remaining time and balance
+        const remaining = Math.max(0, totalParkingTime - elapsed);
+        const remainingHrs = remaining / 3600; // Convert to hours
+        setRemainingBalance(remainingHrs);
         
-        setCurrentLayer(newActiveLayer);
+        // Calculate progress based on remaining balance vs original balance
+        const newProgress = remainingHrs / userBalance;
         
+        // Smooth animation transition
         Animated.timing(progressAnim, {
-          toValue: currentLayerProgress,
-          duration: 200, // Smooth transition over 200ms
+          toValue: newProgress,
+          duration: 200, // Quick smooth transition
           useNativeDriver: false,
         }).start();
-      }, 1000);
+        
+        // Log every 30 seconds to avoid spam - show real balance values
+        if (elapsed % 30 === 0) {
+          const remainingBalanceStr = remainingHrs.toFixed ? remainingHrs.toFixed(2) : '0.00';
+          const userBalanceStr = userBalance && userBalance.toFixed ? userBalance.toFixed(2) : '0.00';
+          console.log('🎯 Timer update - Duration:', formatTime(elapsed), 'Remaining Balance:', remainingBalanceStr, 'hours (from', userBalanceStr, 'hours)');
+        }
+      }, 1000); // Update every second for visible animation
       
       intervalRef.current = interval;
       
@@ -2937,7 +2975,7 @@ const formatHoursToHHMM = (decimalHours: number): string => {
         clearInterval(intervalRef.current);
       }
     }
-  }, [isTimerRunning, parkingStartTime.current, layerDuration, progressAnim]);
+  }, [isTimerRunning, parkingStartTime.current, totalParkingTime, progressAnim, userBalance]);
 
   // Refresh data when screen comes into focus
   useFocusEffect(
@@ -4396,16 +4434,16 @@ const formatHoursToHHMM = (decimalHours: number): string => {
                   {/* Progress Circle using SVG */}
                   <View style={activeParkingScreenStyles.timerProgressContainer}>
                     <View style={activeParkingScreenStyles.timerProgressSvg}>
-                      {/* Progress fill that grows from bottom */}
+                      {/* Progress fill that shows remaining balance */}
                       <Animated.View
                         style={[
                           activeParkingScreenStyles.timerProgressFill,
                           {
                             height: progressAnim.interpolate({
                               inputRange: [0, 1],
-                              outputRange: ['0%', '100%'], // Fill from 0% to 100%
+                              outputRange: ['0%', '100%'], // Fill from 0% to 100% based on remaining balance
                             }),
-                            backgroundColor: currentLayer === 'maroon' ? colors.primary : '#D3D3D3', // Maroon or light gray
+                            backgroundColor: colors.primary, // Use primary theme color consistently
                           }
                         ]}
                       />
